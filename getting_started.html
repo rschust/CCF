@@ -1,0 +1,406 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Getting Started &mdash; CCF  documentation</title>
+  
+
+  
+  
+  
+  
+
+  
+  <script type="text/javascript" src="_static/js/modernizr.min.js"></script>
+  
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+        <script type="text/javascript" src="_static/jquery.js"></script>
+        <script type="text/javascript" src="_static/underscore.js"></script>
+        <script type="text/javascript" src="_static/doctools.js"></script>
+        <script type="text/javascript" src="_static/language_data.js"></script>
+    
+    <script type="text/javascript" src="_static/js/theme.js"></script>
+
+    
+
+  
+  <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Starting up a network" href="start_network.html" />
+    <link rel="prev" title="Introduction" href="introduction.html" /> 
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+          
+
+          
+            <a href="index.html" class="icon icon-home"> CCF
+          
+
+          
+          </a>
+
+          
+            
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <p class="caption"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Getting Started</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#operating-systems">Operating Systems</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#hardware">Hardware</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#azure-confidential-compute">Azure Confidential Compute</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#quickstart">QuickStart</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#oe-engine-walkthrough">OE Engine Walkthrough</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#dependencies">Dependencies</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#id2">QuickStart</a></li>
+<li class="toctree-l3"><a class="reference internal" href="#details">Details</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#building-ccf">Building CCF</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#build-switches">Build switches</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#tests">Tests</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#sanitizers">Sanitizers</a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#build-and-test-without-sgx">Build and Test without SGX</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="start_network.html">Starting up a network</a></li>
+<li class="toctree-l1"><a class="reference internal" href="recovery.html">Catastrophic Recovery</a></li>
+<li class="toctree-l1"><a class="reference internal" href="ledger.html">Ledger</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kv/index.html">Key-Value store</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cryptography.html">Cryptography</a></li>
+<li class="toctree-l1"><a class="reference internal" href="example.html">Example App</a></li>
+<li class="toctree-l1"><a class="reference internal" href="demo.html">End-to-end demo</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpc_api.html">RPC API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="glossary.html">Glossary</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">CCF</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="index.html">Docs</a> &raquo;</li>
+        
+      <li>Getting Started</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+            
+            <a href="_sources/getting_started.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="getting-started">
+<span id="id1"></span><h1>Getting Started<a class="headerlink" href="#getting-started" title="Permalink to this headline">¶</a></h1>
+<div class="section" id="operating-systems">
+<h2>Operating Systems<a class="headerlink" href="#operating-systems" title="Permalink to this headline">¶</a></h2>
+<p>At the moment, CCF only builds and runs on Linux. It is primarily developed and
+tested on Ubuntu 18.04.</p>
+</div>
+<div class="section" id="hardware">
+<h2>Hardware<a class="headerlink" href="#hardware" title="Permalink to this headline">¶</a></h2>
+<p>Although it is possible to build and run OpenEnclave on hardware without <a class="reference internal" href="glossary.html#term-sgx"><span class="xref std std-term">SGX</span></a> extensions,
+and run CCF applications in simulation or virtual mode, running with full security guarantees
+requires <a class="reference internal" href="glossary.html#term-sgx"><span class="xref std std-term">SGX</span></a> hardware with <a class="reference internal" href="glossary.html#term-flc"><span class="xref std std-term">FLC</span></a>.</p>
+</div>
+<div class="section" id="azure-confidential-compute">
+<h2>Azure Confidential Compute<a class="headerlink" href="#azure-confidential-compute" title="Permalink to this headline">¶</a></h2>
+<p><a class="reference internal" href="glossary.html#term-azure-confidential-compute"><span class="xref std std-term">Azure Confidential Compute</span></a> offers CCF-compatible VMs, which can be deployed either through
+a <a class="reference external" href="https://aka.ms/ccvm">Marketplace App</a>, or through the <a class="reference internal" href="glossary.html#term-openenclave-engine"><span class="xref std std-term">OpenEnclave Engine</span></a>.</p>
+<div class="section" id="quickstart">
+<h3>QuickStart<a class="headerlink" href="#quickstart" title="Permalink to this headline">¶</a></h3>
+<p>To quickly get a VM up and running, you can run the following script:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> ccf/getting_started/create_vm
+<span class="nv">SUBSCRIPTION</span><span class="o">=</span><span class="nv">$AZURE_SUBSCRIPTION_NAME</span> ./make_vm.sh
+</pre></div>
+</div>
+<p>This will create a default <code class="docutils literal notranslate"><span class="pre">ccf</span></code> user on the VM, authenticated by <code class="docutils literal notranslate"><span class="pre">~/.ssh/id_rsa.pub</span></code>. If you do
+not have a valid SSH key under that path, you will need to either create one, or edit
+<code class="docutils literal notranslate"><span class="pre">vm.json</span></code> to select a different path.</p>
+<p>Alternatively, you can follow the instructions in the section below.</p>
+</div>
+<div class="section" id="oe-engine-walkthrough">
+<h3>OE Engine Walkthrough<a class="headerlink" href="#oe-engine-walkthrough" title="Permalink to this headline">¶</a></h3>
+<p>OE Engine offers detailed <a class="reference external" href="https://github.com/Microsoft/oe-engine/blob/master/docs/deployment.md">deployment instructions</a>, but this is a very condensed summary
+to get a CCF-ready VM up and running in 5 minutes. You can either execute those steps on a
+machine with the <a class="reference external" href="https://docs.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest">Azure CLI</a> installed, or use <a class="reference external" href="https://docs.microsoft.com/en-us/azure/cloud-shell/overview">Azure Cloud Shell</a>.</p>
+<ol class="arabic simple">
+<li><p>Download the <a class="reference external" href="https://github.com/Microsoft/oe-engine/releases">oe-engine binary</a> for your platform.</p></li>
+<li><p>Create a definition file as <code class="docutils literal notranslate"><span class="pre">vm.json</span></code>:</p></li>
+</ol>
+<div class="highlight-json notranslate"><div class="highlight"><pre><span></span><span class="p">{</span>
+    <span class="nt">&quot;properties&quot;</span><span class="p">:</span> <span class="p">{</span>
+        <span class="nt">&quot;vmProfiles&quot;</span><span class="p">:</span> <span class="p">[</span>
+        <span class="p">{</span>
+            <span class="nt">&quot;name&quot;</span><span class="p">:</span> <span class="s2">&quot;ccf-test&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;osType&quot;</span><span class="p">:</span> <span class="s2">&quot;Linux&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;vmSize&quot;</span><span class="p">:</span> <span class="s2">&quot;Standard_DC2s&quot;</span><span class="p">,</span>
+            <span class="nt">&quot;ports&quot;</span><span class="p">:</span> <span class="p">[</span><span class="mi">22</span><span class="p">,</span> <span class="mi">25000</span><span class="p">]</span>
+        <span class="p">}</span>
+        <span class="p">],</span>
+        <span class="nt">&quot;linuxProfile&quot;</span><span class="p">:</span> <span class="p">{</span>
+            <span class="nt">&quot;adminUsername&quot;</span><span class="p">:</span> <span class="s2">&quot;ccf&quot;</span>
+        <span class="p">}</span>
+    <span class="p">}</span>
+<span class="p">}</span>
+</pre></div>
+</div>
+<p>3. Generate Azure Resource Manager deployment templates. This assumes that you are using an <a class="reference external" href="https://docs.microsoft.com/en-us/azure/virtual-machines/linux/mac-create-ssh-keys">SSH key</a> to
+authenticate, but it is also possible to use a password with <a class="reference external" href="https://github.com/Microsoft/oe-engine/blob/master/docs/examples/oe-lnx-passwd.json">adminPassword</a>.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>oe-engine generate --api-model vm.json --ssh-public-key ~/.ssh/id_rsa.pub --output-directory vm
+</pre></div>
+</div>
+<ol class="arabic simple" start="4">
+<li><p>Log in to Azure, set a default subscription and create a resource group</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>az login
+az account <span class="nb">set</span> --subscription &lt;subscription id&gt;
+az group create -l eastus -n &lt;resource group name&gt;
+</pre></div>
+</div>
+<ol class="arabic simple" start="5">
+<li><p>Deploy the VM</p></li>
+</ol>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>az group deployment create --name ccf-deploy <span class="se">\</span>
+                           --resource-group &lt;resource group name&gt; <span class="se">\</span>
+                           --template-file vm/azuredeploy.json <span class="se">\</span>
+                           --parameters @vm/azuredeploy.parameters.json
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="dependencies">
+<h2>Dependencies<a class="headerlink" href="#dependencies" title="Permalink to this headline">¶</a></h2>
+<div class="section" id="id2">
+<h3>QuickStart<a class="headerlink" href="#id2" title="Permalink to this headline">¶</a></h3>
+<p>To quickly set up the dependencies necessary to build CCF, simply run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> ccf/getting_started/setup_vm
+./setup.sh
+</pre></div>
+</div>
+<p>Once this is complete, you can proceed to <a class="reference internal" href="#building-ccf">Building CCF</a>.</p>
+<p>On a machine without SGX, you can instead use:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> ccf/getting_started/setup_vm
+./setup_nosgx.sh
+</pre></div>
+</div>
+</div>
+<div class="section" id="details">
+<h3>Details<a class="headerlink" href="#details" title="Permalink to this headline">¶</a></h3>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/openenclave/openenclave">OpenEnclave</a></p></li>
+<li><p><a class="reference external" href="https://tls.mbed.org/">mbedtls</a></p></li>
+<li><p><a class="reference external" href="https://www.boost.org/">boost</a> (<a class="reference external" href="https://github.com/Microsoft/eEVM">eEVM</a> transaction engine only)</p></li>
+<li><p><a class="reference external" href="https://github.com/libuv/libuv">libuv</a></p></li>
+</ul>
+</div>
+</div>
+<div class="section" id="building-ccf">
+<h2>Building CCF<a class="headerlink" href="#building-ccf" title="Permalink to this headline">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir build
+<span class="nb">cd</span> build
+cmake -GNinja ..
+ninja
+</pre></div>
+</div>
+</div>
+<div class="section" id="build-switches">
+<h2>Build switches<a class="headerlink" href="#build-switches" title="Permalink to this headline">¶</a></h2>
+<p>The full list of build switches can be obtained by running:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake -L ..
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><strong>BUILD_TESTS</strong>: Boolean. Build all tests for CCF. Default to ON.</p></li>
+<li><p><strong>BUILD_SMALLBANK</strong>: Boolean. Build SmallBank performance benchmark. Default to OFF.</p></li>
+<li><p><strong>CLIENT_MBEDTLS_PREFIX</strong>: Path. Prefix to mbedtls install to be used by test clients. Default to <code class="docutils literal notranslate"><span class="pre">/usr/local</span></code>.</p></li>
+<li><p><strong>CURVE_CHOICE</strong>: String, one of <code class="docutils literal notranslate"><span class="pre">secp384r1</span></code>, <code class="docutils literal notranslate"><span class="pre">curve25519</span></code>, <code class="docutils literal notranslate"><span class="pre">secp256k1_mbedtls</span></code>, <code class="docutils literal notranslate"><span class="pre">secp256k1_bitcoin</span></code>. Elliptic curve to use for CCF asymmetric keys. Default to <code class="docutils literal notranslate"><span class="pre">secp384r1</span></code>.</p></li>
+<li><p><strong>NO_STRICT_TLS_CIPHERSUITES</strong>: Boolean. Relax the list of accepted TLS ciphersuites. Default to OFF.</p></li>
+<li><p><strong>OE_PREFIX</strong>: Path. OpenEnclave install prefix. Default to <code class="docutils literal notranslate"><span class="pre">/opt/openenclave</span></code>.</p></li>
+<li><p><strong>SAN</strong>: Boolean. Build unit tests with Address and Undefined behaviour sanitizers enabled. Default to OFF.</p></li>
+<li><p><strong>TARGET</strong>: String, one of <code class="docutils literal notranslate"><span class="pre">all</span></code>, <code class="docutils literal notranslate"><span class="pre">sgx</span></code>, <code class="docutils literal notranslate"><span class="pre">virtual</span></code>. Defaults to <code class="docutils literal notranslate"><span class="pre">all</span></code>, which builds both “virtual” enclaves and actual SGX enclaves.</p></li>
+<li><p><strong>VERBOSE_LOGGING</strong>: Boolean. Enable all logging levels. Default to OFF.</p></li>
+</ul>
+</div>
+<div class="section" id="tests">
+<h2>Tests<a class="headerlink" href="#tests" title="Permalink to this headline">¶</a></h2>
+<p>Tests can be started through the tests.sh wrapper for ctest:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nb">cd</span> build
+./tests.sh -VV
+</pre></div>
+</div>
+<p>Although CCF’s unit tests can be run through ctest directly, the end-to-end tests that
+start a network require some Python infrastructure.
+<a class="reference external" href="https://github.com/microsoft/CCF/blob/master/tests/tests.sh">tests.sh</a> will set up a virtual
+environment with these dependencies and activate it before running ctest. Further runs
+will re-use that virtual environment.</p>
+<div class="section" id="sanitizers">
+<h3>Sanitizers<a class="headerlink" href="#sanitizers" title="Permalink to this headline">¶</a></h3>
+<p>To build and run the tests with the Address and Undefined behaviour sanitizers, run:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>cmake -GNinja -DSAN<span class="o">=</span>ON ..
+ninja
+./tests.sh -VV
+</pre></div>
+</div>
+</div>
+</div>
+<div class="section" id="build-and-test-without-sgx">
+<h2>Build and Test without SGX<a class="headerlink" href="#build-and-test-without-sgx" title="Permalink to this headline">¶</a></h2>
+<p>CCF can build “virtual” enclaves, ie. binaries that are functionally equivalent,
+but do not use SGX. This can be useful when working on non-SGX hardware,
+or when using development tools that do not work in an enclave, such as
+profiling, code coverage, sanitizers etc.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>mkdir build
+<span class="nb">cd</span> build
+cmake -GNinja -DTARGET<span class="o">=</span>virtual ..
+ninja
+</pre></div>
+</div>
+<p>Tests can be run normally, see <a class="reference internal" href="#tests"><span class="std std-ref">Tests</span></a>. On a full build of CCF, it is also possible to
+run tests with virtual enclaves by setting <code class="docutils literal notranslate"><span class="pre">TEST_ENCLAVE</span></code>:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">TEST_ENCLAVE</span><span class="o">=</span>virtual ./tests.sh -VV
+</pre></div>
+</div>
+<p>Tests that require enclave attestation will be skipped.</p>
+</div>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="start_network.html" class="btn btn-neutral float-right" title="Starting up a network" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="introduction.html" class="btn btn-neutral float-left" title="Introduction" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2018, Microsoft Research
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/rtfd/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script>
+
+  
+  
+    
+   
+
+</body>
+</html>

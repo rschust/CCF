@@ -1,0 +1,332 @@
+
+
+<!DOCTYPE html>
+<!--[if IE 8]><html class="no-js lt-ie9" lang="en" > <![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en" > <!--<![endif]-->
+<head>
+  <meta charset="utf-8">
+  
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  
+  <title>Catastrophic Recovery &mdash; CCF  documentation</title>
+  
+
+  
+  
+  
+  
+
+  
+  <script type="text/javascript" src="_static/js/modernizr.min.js"></script>
+  
+    
+      <script type="text/javascript" id="documentation_options" data-url_root="./" src="_static/documentation_options.js"></script>
+        <script type="text/javascript" src="_static/jquery.js"></script>
+        <script type="text/javascript" src="_static/underscore.js"></script>
+        <script type="text/javascript" src="_static/doctools.js"></script>
+        <script type="text/javascript" src="_static/language_data.js"></script>
+        <script type="text/javascript" src="https://unpkg.com/mermaid@7.1.0/dist/mermaid.min.js"></script>
+    
+    <script type="text/javascript" src="_static/js/theme.js"></script>
+
+    
+
+  
+  <link rel="stylesheet" href="_static/css/theme.css" type="text/css" />
+  <link rel="stylesheet" href="_static/pygments.css" type="text/css" />
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Ledger" href="ledger.html" />
+    <link rel="prev" title="Starting up a network" href="start_network.html" /> 
+</head>
+
+<body class="wy-body-for-nav">
+
+   
+  <div class="wy-grid-for-nav">
+    
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+          
+
+          
+            <a href="index.html" class="icon icon-home"> CCF
+          
+
+          
+          </a>
+
+          
+            
+            
+          
+
+          
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+
+          
+        </div>
+
+        <div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="main navigation">
+          
+            
+            
+              
+            
+            
+              <p class="caption"><span class="caption-text">Contents:</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="getting_started.html">Getting Started</a></li>
+<li class="toctree-l1"><a class="reference internal" href="start_network.html">Starting up a network</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Catastrophic Recovery</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#phase-1-crash-fault-tolerant-public-network">Phase 1: Crash-fault tolerant public network</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#phase-2-unsealing-secrets-and-recovering-private-transactions">Phase 2: Unsealing secrets and recovering private transactions</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="ledger.html">Ledger</a></li>
+<li class="toctree-l1"><a class="reference internal" href="kv/index.html">Key-Value store</a></li>
+<li class="toctree-l1"><a class="reference internal" href="cryptography.html">Cryptography</a></li>
+<li class="toctree-l1"><a class="reference internal" href="example.html">Example App</a></li>
+<li class="toctree-l1"><a class="reference internal" href="demo.html">End-to-end demo</a></li>
+<li class="toctree-l1"><a class="reference internal" href="rpc_api.html">RPC API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="api.html">API</a></li>
+<li class="toctree-l1"><a class="reference internal" href="glossary.html">Glossary</a></li>
+</ul>
+
+            
+          
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap">
+
+      
+      <nav class="wy-nav-top" aria-label="top navigation">
+        
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="index.html">CCF</a>
+        
+      </nav>
+
+
+      <div class="wy-nav-content">
+        
+        <div class="rst-content">
+        
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+<div role="navigation" aria-label="breadcrumbs navigation">
+
+  <ul class="wy-breadcrumbs">
+    
+      <li><a href="index.html">Docs</a> &raquo;</li>
+        
+      <li>Catastrophic Recovery</li>
+    
+    
+      <li class="wy-breadcrumbs-aside">
+        
+            
+            <a href="_sources/recovery.rst.txt" rel="nofollow"> View page source</a>
+          
+        
+      </li>
+    
+  </ul>
+
+  
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+            
+  <div class="section" id="catastrophic-recovery">
+<h1>Catastrophic Recovery<a class="headerlink" href="#catastrophic-recovery" title="Permalink to this headline">¶</a></h1>
+<p>For unexpected reasons, all nodes in the network may crash while executing business transactions. In this catastrophic scenario, it is possible that the length of ledgers of each node may differ slightly since some transactions may not have yet been fully replicated.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>The current version of the recovery protocol relies on Intel SGX Sealing capability <a class="footnote-reference brackets" href="#sealing" id="id1">1</a>.</p>
+</div>
+<p>However, one of the previous ledgers can be recovered and the execution of new business transactions continue if the following three conditions are met:</p>
+<ul class="simple">
+<li><p>At least one of the old nodes’ CPU survived.</p></li>
+<li><p>The sealed network secret file (<code class="docutils literal notranslate"><span class="pre">sealed_secrets.&lt;date&gt;.&lt;pid&gt;</span></code>) associated with that CPU is available to the members.</p></li>
+<li><p>One of the ledgers (preferably the ledger of the previous leader as it is likely to be the longest) is available.</p></li>
+</ul>
+<p>The recovery protocol consists of two phases. First, the public transactions of the previous network are restored and the new network established. Then, after the members have agreed that the configuration of the new network is suitable, the sealed network secrets can be restored and the previous private transactions replayed.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>Before attempting to recover a network, it is recommended to make a copy of all available ledgers and sealed secrets file.</p>
+</div>
+<div class="section" id="phase-1-crash-fault-tolerant-public-network">
+<h2>Phase 1: Crash-fault tolerant public network<a class="headerlink" href="#phase-1-crash-fault-tolerant-public-network" title="Permalink to this headline">¶</a></h2>
+<p>To initiate the first phase of the recovery protocol, one of several nodes must be started with the <code class="docutils literal notranslate"><span class="pre">--start=recover</span></code> command line argument:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ cchost --start<span class="o">=</span>recover --enclave-file<span class="o">=</span>/path/to/application --raft-host<span class="o">=</span>raft_ip --raft-port<span class="o">=</span>raft_port
+--tls-host<span class="o">=</span>tls_ip --tls-pubhost<span class="o">=</span>tls_public_ip --tls-port<span class="o">=</span>tls_port --ledger-file<span class="o">=</span>ledger_file
+--node-cert-file<span class="o">=</span>/path/to/node_certificate --quote-file<span class="o">=</span>/path/to/quote
+</pre></div>
+</div>
+<p>Each node will then immediately restore the public entries of its ledger (<code class="docutils literal notranslate"><span class="pre">--ledger-file</span></code>). Because deserialising the public entries present in the ledger may take some time, members are allowed to query the progress of the public recovery by running the <code class="docutils literal notranslate"><span class="pre">getSignedIndex</span></code> RPC which returns the version of the last signed recovered ledger entry. Once the public ledger is fully recovered, the <code class="docutils literal notranslate"><span class="pre">getSignedIndex</span></code> RPC returns <code class="docutils literal notranslate"><span class="pre">{&quot;state&quot;:</span> <span class="pre">&quot;awaitingRecovery&quot;}</span></code>.</p>
+<p>Members are then allowed to send the new network configuration containing the properties of each node in the new network via the <code class="docutils literal notranslate"><span class="pre">setRecoveryNodes</span></code> RPC. The target node becomes the leader of the new network and applies the new network configuration. The new identity (<code class="docutils literal notranslate"><span class="pre">networkcert.pem</span></code> public certificate) of the network is returned by the RPC command.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>It is recommended to submit the <code class="docutils literal notranslate"><span class="pre">setRecoveryNodes</span></code> RPC on the node that returns the highest <code class="docutils literal notranslate"><span class="pre">&quot;signed_index&quot;</span></code> to the <code class="docutils literal notranslate"><span class="pre">getSignedIndex</span></code> RPC. This way, the number of transactions recovered is maximised. Also note that some of most recent transactions executed before the network crashed may not be recovered as no signature certify their execution.</p>
+</div>
+<p>Similarly to the normal join protocol (see <a class="reference internal" href="start_network.html#adding-nodes-to-the-network"><span class="std std-ref">Adding nodes to the network</span></a>), the initial set of nodes are then allowed to join the public network.</p>
+
+            <style>
+            /* mermaid issue 527 workaround */
+            .section {
+                opacity: 1.0 !important;
+            }
+            </style>
+            <script>mermaid.initialize({startOnLoad:true});</script><div class="mermaid">
+            sequenceDiagram
+    participant Members
+    participant Leader
+    participant Follower
+
+    Note over Leader, Follower: Started in recovery mode
+
+    Members-&gt;&gt;+Leader: getSignedIndex
+    Leader--&gt;&gt;Members: {&quot;signed_index&quot;: 50}
+    Members-&gt;&gt;Leader: getSignedIndex
+    Leader--&gt;&gt;Members: {&quot;state&quot;: &quot;awaitingRecovery&quot;}
+
+    Note over Members: Choose the longest recovered ledger.
+
+    Members-&gt;&gt;+Leader: setRecoveryNodes RPC (new network configuration)
+
+    Members-&gt;&gt;+Follower: join network
+    Follower-&gt;&gt;+Leader: join network
+    Follower--&gt;&gt;Members: join network response
+
+    Note over Leader, Follower: Part of Public Network
+        </div></div>
+<div class="section" id="phase-2-unsealing-secrets-and-recovering-private-transactions">
+<h2>Phase 2: Unsealing secrets and recovering private transactions<a class="headerlink" href="#phase-2-unsealing-secrets-and-recovering-private-transactions" title="Permalink to this headline">¶</a></h2>
+<p>Once the public crash-fault tolerant network is established, members are allowed to vote to confirm that the configuration of the new network is suitable to complete the recovery protocol. The first member proposes to recover the network and passes the sealed network secrets file to the new network:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ memberclient accept_recovery --sealed-secrets<span class="o">=</span>/path/to/sealed/secrets/file --cert<span class="o">=</span>/path/to/member1/cert --privk<span class="o">=</span>/path/to/member1/private/key --host<span class="o">=</span>leader_ip --port<span class="o">=</span>leader_port --ca<span class="o">=</span>/path/to/new/network/cert
+</pre></div>
+</div>
+<p>If successful, this commands returns the proposal id that can be used by other members to submit their votes:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>$ ./memberclient vote --accept --cert<span class="o">=</span>/path/to/member2/cert --privk<span class="o">=</span>/path/to/member2/private/key --host<span class="o">=</span>leader_ip --port<span class="o">=</span>port_ip --id<span class="o">=</span>&lt;proposal_id&gt; --ca<span class="o">=</span>/path/to/new/network/cert
+</pre></div>
+</div>
+<p>Once a quorum of members (defined by the constitution rules but typically, a majority of members) have agreed to recover the network, the network secrets are unsealed and the recovery of the private entries of the ledger is automatically started.</p>
+<div class="admonition note">
+<p class="admonition-title">Note</p>
+<p>While the leader and all active followers are recovering the private ledger, no new transaction can be executed by the network.</p>
+</div>
+
+            <style>
+            /* mermaid issue 527 workaround */
+            .section {
+                opacity: 1.0 !important;
+            }
+            </style>
+            <div class="mermaid">
+            sequenceDiagram
+    participant Members
+    participant Leader
+    participant Follower
+
+    Members-&gt;&gt;+Leader: Propose recovery + sealed network secrets
+    loop Wait until quorum
+        Members-&gt;&gt;+Leader: Vote(s)
+    end
+
+    Leader-&gt;&gt;+Leader: Initiate end of recovery protocol
+
+    Leader-&gt;&gt;+Leader: Recover Private Ledger
+    Follower-&gt;&gt;+Follower: Recover Private Ledger
+
+    Note over Leader: Part of Private Network
+    Note over Follower: Part of Private Network
+        </div><p>Once the recovery of the private ledger on all the nodes that have joined the new network is complete, the ledger is fully recovered and users are able to continue issuing business transactions.</p>
+<div class="admonition warning">
+<p class="admonition-title">Warning</p>
+<p>After recovery, the identity of the network has changed. The new network certificate <code class="docutils literal notranslate"><span class="pre">networkcert.pem</span></code> returned in <a class="reference internal" href="#phase-1-crash-fault-tolerant-public-network"><span class="std std-ref">Phase 1: Crash-fault tolerant public network</span></a> needs to be distributed to all existing and new users.</p>
+</div>
+<p class="rubric">Footnotes</p>
+<dl class="footnote brackets">
+<dt class="label" id="sealing"><span class="brackets"><a class="fn-backref" href="#id1">1</a></span></dt>
+<dd><p><a class="reference external" href="https://software.intel.com/en-us/blogs/2016/05/04/introduction-to-intel-sgx-sealing">Intel SGX Sealing</a>.</p>
+</dd>
+</dl>
+</div>
+</div>
+
+
+           </div>
+           
+          </div>
+          <footer>
+  
+    <div class="rst-footer-buttons" role="navigation" aria-label="footer navigation">
+      
+        <a href="ledger.html" class="btn btn-neutral float-right" title="Ledger" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right"></span></a>
+      
+      
+        <a href="start_network.html" class="btn btn-neutral float-left" title="Starting up a network" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left"></span> Previous</a>
+      
+    </div>
+  
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>
+        &copy; Copyright 2018, Microsoft Research
+
+    </p>
+  </div>
+  Built with <a href="http://sphinx-doc.org/">Sphinx</a> using a <a href="https://github.com/rtfd/sphinx_rtd_theme">theme</a> provided by <a href="https://readthedocs.org">Read the Docs</a>. 
+
+</footer>
+
+        </div>
+      </div>
+
+    </section>
+
+  </div>
+  
+
+
+  <script type="text/javascript">
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script>
+
+  
+  
+    
+   
+
+</body>
+</html>
