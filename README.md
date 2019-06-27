@@ -1,4 +1,6 @@
-[![Build Status](https://msr-gryffindor.visualstudio.com/COCO/_apis/build/status/CCF%20Github%20CI?branchName=master)](https://msr-gryffindor.visualstudio.com/COCO/_build/latest?definitionId=82&branchName=master)
+[![CircleCI](https://circleci.com/gh/microsoft/CCF/tree/master.svg?style=svg&circle-token=4baa7c8b286e0d8b6c2f320f9f6427e156fa8562)](https://circleci.com/gh/microsoft/CCF/tree/master) [![Build Status](https://msr-gryffindor.visualstudio.com/COCO/_apis/build/status/CCF%20Github%20CI?branchName=master)](https://msr-gryffindor.visualstudio.com/COCO/_build/latest?definitionId=82&branchName=master)
+[![codecov](https://codecov.io/gh/microsoft/CCF/branch/master/graph/badge.svg)](https://codecov.io/gh/microsoft/CCF)
+[![docs](https://img.shields.io/badge/docs-microsoft.github.io%2FCCF-brightgreen.svg)](https://microsoft.github.io/CCF/)
 
 # The Confidential Consortium Framework
 
@@ -15,7 +17,7 @@ CCF enables enterprise-ready computation or blockchain networks that deliver:
    effectively verify the entire network. This simplifies consensus and thus improves transaction speed and latency — all without compromising security or assuming trust.
 
  * **Richer, more flexible confidentiality models.** Beyond safeguarding data access with encryption-in-use via TEEs, we use industry standards (TLS and remote attestation)
-   to ensure secure node communication. Transactions can be processed in the clear or revealed only to authorized parties, without requiring complicated confidentiality schemes. 
+   to ensure secure node communication. Transactions can be processed in the clear or revealed only to authorized parties, without requiring complicated confidentiality schemes.
 
  * **Network and service policy management through non-centralized governance.** The framework provides a network and service configuration to express and manage consortium
    and multi-party policies. Governance actions, such as adding members to the governing consortium or initiating catastrophic recovery, can be managed and recorded through
@@ -28,11 +30,11 @@ CCF enables enterprise-ready computation or blockchain networks that deliver:
 
 In a public blockchain network, anyone can transact on the network, actors on the network are pseudo-anonymous and untrusted, and anyone can add nodes to the network
 — with full access to the ledger and with the ability to participate in consensus. Similarly, other distributed data technologies (such as distributed databases)
-can have challenges in multi-party scenarios when it comes to deciding what party operates it and whether that party could choose or could be compelled to act maliciously. 
- 
+can have challenges in multi-party scenarios when it comes to deciding what party operates it and whether that party could choose or could be compelled to act maliciously.
+
 In contrast, in a consortium or multi-party network backed by TEEs, such as CCF, consortium member identities and node identities are known and controlled.
 A trusted network of enclaves running on physical nodes is established without requiring the actors that control those nodes to trust one another
-—  what code is run is controlled and correctness of its output can be guaranteed, simplifying the consensus methods and reducing duplicative validation of data. 
+—  what code is run is controlled and correctness of its output can be guaranteed, simplifying the consensus methods and reducing duplicative validation of data.
 
 ![diagram](https://microsoft.github.io/CCF/_images/ccf.svg)
 
@@ -43,7 +45,7 @@ transactions in highly performant and highly available fashion.
 
 ## A flexible confidentiality layer for any multi-party computation application or blockchain ledger to build upon
 
-CCF currently runs on [Intel SGX](https://software.intel.com/en-us/sgx)-enabled platforms. Because CCF uses the [OpenEnclave SDK](https://github.com/Microsoft/openenclave)
+CCF currently runs on [Intel SGX](https://software.intel.com/en-us/sgx)-enabled platforms. Because CCF uses the [OpenEnclave SDK](https://github.com/openenclave/openenclave)
 as the foundation for running in an enclave, as OpenEnclave supports new TEE technologies, CCF will be able to run on new platforms. Networks can be run on-premises,
 in one or many cloud-hosted data centers, including [Microsoft Azure](https://azure.microsoft.com/), or in any hybrid configuration.
 
@@ -57,7 +59,7 @@ to embed one of several language runtimes on top of its key-value store. Clients
  * Browse the [CCF Documentation](https://microsoft.github.io/CCF/).
  * Explore the CCF open-source GitHub repo, which also contains application examples and sample scripts for provisioning and setting up confidential computing VMs using Azure.
  * Learn more about [Azure Confidential Computing](https://azure.microsoft.com/solutions/confidential-compute/) offerings like Azure DC-series (which support Intel SGX TEE)
-   and [Open Enclave](https://github.com/Microsoft/openenclave) that CCF can run on.
+   and [Open Enclave](https://github.com/openenclave/openenclave) that CCF can run on.
 
 ## Getting Started on Azure Confidential Computing
 
@@ -80,10 +82,7 @@ Run the tests.
 
 ```bash
 cd build
-python3.7 -m venv env
-source env/bin/activate
-pip install -r ../tests/requirements.txt
-ctest
+./tests.sh
 ```
 
 ## Third-party components
@@ -100,6 +99,13 @@ https://cla.microsoft.com.
 When you submit a pull request, a CLA-bot will automatically determine whether you need
 to provide a CLA and decorate the PR appropriately (e.g., label, comment). Simply follow the
 instructions provided by the bot. You will only need to do this once across all repositories using our CLA.
+
+All pull requests must pass a suite of CI tests before they will be merged. The test
+commands are defined in `.vsts-ci.yml` and `.circleci/config.yml`, so you can locally
+repeat any tests which fail. You should at least run the `static_checks` job before
+creating a pull request, ensuring all of your code is correctly formatted. The test
+commands will only report misformatted files - to _reformat_ the files, pass `-f`
+to the `check-format.sh ...` command and remove `--check` from the `black ...` command.
 
 This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
 For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/)

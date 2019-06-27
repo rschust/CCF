@@ -16,23 +16,6 @@ import e2e_args
 from loguru import logger as LOG
 
 
-def wait_for_node_commit_sync(nodes):
-    """
-    Wait for commit level to get in sync on all nodes. This is expected to
-    happen once CFTR has been established, in the absence of new transactions.
-    """
-    for _ in range(3):
-        commits = []
-        for node in nodes:
-            with node.management_client() as c:
-                id = c.request("getCommit", {})
-                commits.append(c.response(id).commit)
-        if [commits[0]] * len(commits) == commits:
-            break
-        time.sleep(1)
-    assert [commits[0]] * len(commits) == commits, "All nodes at the same commit"
-
-
 def run(args):
     # SNIPPET_START: parsing
     with open(args.scenario) as f:
@@ -51,38 +34,43 @@ def run(args):
         primary, followers = network.start_and_join(args)
         # SNIPPET_END: create_network
 
-        check = infra.ccf.Checker()
+        with primary.management_client() as mc:
 
-        for connection in scenario["connections"]:
-            with (
-                primary.user_client()
-                if not connection.get("on_follower")
-                else random.choice(followers).user_client()
-            ) as client:
-                txs = connection.get("transactions", [])
+            check = infra.ccf.Checker()
+            check_commit = infra.ccf.Checker(mc)
+            with primary.user_client() as uc:
+                check_commit(uc.do("mkSign", params={}), result=True)
 
-                for include_file in connection.get("include", []):
-                    with open(os.path.join(scenario_dir, include_file)) as f:
-                        txs += json.load(f)
+            for connection in scenario["connections"]:
+                with (
+                    primary.user_client(format="json")
+                    if not connection.get("on_follower")
+                    else random.choice(followers).user_client(format="json")
+                ) as client:
+                    txs = connection.get("transactions", [])
 
-                for tx in txs:
-                    r = client.rpc(tx["method"], tx["params"])
+                    for include_file in connection.get("include", []):
+                        with open(os.path.join(scenario_dir, include_file)) as f:
+                            txs += json.load(f)
 
-                    if tx.get("expected_error") is not None:
-                        check(
-                            r,
-                            error=lambda e: e is not None
-                            and e["code"]
-                            == infra.jsonrpc.ErrorCode(tx.get("expected_error")),
-                        )
+                    for tx in txs:
+                        r = client.rpc(tx["method"], tx["params"])
 
-                    elif tx.get("expected_result") is not None:
-                        check(r, result=tx.get("expected_result"))
+                        if tx.get("expected_error") is not None:
+                            check(
+                                r,
+                                error=lambda e: e is not None
+                                and e["code"]
+                                == infra.jsonrpc.ErrorCode(tx.get("expected_error")),
+                            )
 
-                    else:
-                        check(r, result=lambda res: res is not None)
+                        elif tx.get("expected_result") is not None:
+                            check_commit(r, result=tx.get("expected_result"))
 
-            wait_for_node_commit_sync(network.nodes)
+                        else:
+                            check_commit(r, result=lambda res: res is not None)
+
+                network.wait_for_node_commit_sync()
 
     if args.network_only:
         LOG.info("Keeping network alive with the following nodes:")

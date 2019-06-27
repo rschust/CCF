@@ -4,8 +4,11 @@
 #include "consts.h"
 #include "ds/buffer.h"
 #include "ds/histogram.h"
+#include "ds/json_schema.h"
 #include "enclave/rpchandler.h"
+#include "forwarder.h"
 #include "jsonrpc.h"
+#include "metrics.h"
 #include "node/certs.h"
 #include "node/clientsignatures.h"
 #include "node/consensus.h"
@@ -14,16 +17,13 @@
 #include "rpcexception.h"
 #include "serialization.h"
 
+#include <fmt/format_header_only.h>
 #include <utility>
 #include <vector>
 
-#define HIST_MAX (1 << 17)
-#define HIST_MIN 1
-#define HIST_BUCKET_GRANULARITY 5
-
 namespace ccf
 {
-  class RpcFrontend : public enclave::RpcHandler
+  class RpcFrontend : public enclave::RpcHandler, public ForwardedRpcHandler
   {
   public:
     enum ReadWrite
@@ -33,17 +33,24 @@ namespace ccf
       MayWrite
     };
 
-  protected:
-    Store& tables;
+    enum class Forwardable
+    {
+      CanForward,
+      DoNotForward
+    };
 
     struct RequestArgs
     {
+      enclave::RPCContext& rpc_ctx;
       Store::Tx& tx;
-      CBuffer caller;
       CallerId caller_id;
       const std::string& method;
       const nlohmann::json& params;
+      const SignedReq& signed_request;
     };
+
+  protected:
+    Store& tables;
 
   private:
     using HandleFunction =
@@ -61,6 +68,9 @@ namespace ccf
     {
       HandleFunction func;
       ReadWrite rw;
+      nlohmann::json params_schema;
+      nlohmann::json result_schema;
+      Forwardable forwardable;
     };
 
     Nodes* nodes;
@@ -68,28 +78,21 @@ namespace ccf
     Certs* certs;
     std::optional<Handler> default_handler;
     std::unordered_map<std::string, Handler> handlers;
-    Consensus* raft;
-    std::shared_ptr<NodeToNode> n2n_channels;
+    kv::Replicator* raft;
+    std::shared_ptr<AbstractForwarder> cmd_forwarder;
     kv::TxHistory* history;
     size_t sig_max_tx = 1000;
     size_t tx_count = 0;
-    using Hist =
-      histogram::Histogram<int, HIST_MIN, HIST_MAX, HIST_BUCKET_GRANULARITY>;
-    histogram::Global<Hist> global =
-      histogram::Global<Hist>("histogram", __FILE__, __LINE__);
-    Hist histogram = Hist(global);
     std::chrono::milliseconds sig_max_ms = std::chrono::milliseconds(1000);
     std::chrono::milliseconds ms_to_sig = std::chrono::milliseconds(1000);
-    bool can_forward;
-
     bool request_storing_disabled = false;
+    metrics::Metrics metrics;
 
     void update_raft()
     {
-      if (raft == nullptr)
+      if (raft != tables.get_replicator().get())
       {
-        auto replicator = tables.get_replicator();
-        raft = dynamic_cast<Consensus*>(replicator.get());
+        raft = tables.get_replicator().get();
       }
     }
 
@@ -136,74 +139,56 @@ namespace ccf
       return caller_id;
     }
 
-    nlohmann::json redirect_json(jsonrpc::SeqNo id, bool is_forwarded = false)
+    std::optional<nlohmann::json> forward_or_redirect_json(
+      enclave::RPCContext& ctx, Forwardable forwardable)
     {
-#ifndef RPC_FORWARD_TO_LEADER
-      if ((nodes != nullptr) && (raft != nullptr))
+      if (
+        cmd_forwarder && forwardable == Forwardable::CanForward &&
+        !ctx.fwd.has_value())
       {
-        NodeId leader_id = raft->leader();
-        Store::Tx tx;
-        auto nodes_view = tx.get_view(*nodes);
-        auto info = nodes_view->get(leader_id);
-
-        if (info)
+        return {};
+      }
+      else
+      {
+        // If this frontend is not allowed to forward or the command has already
+        // been forwarded, redirect to the current leader
+        if ((nodes != nullptr) && (raft != nullptr))
         {
-          return jsonrpc::error_response(
-            id,
-            jsonrpc::ErrorCodes::TX_NOT_LEADER,
-            info->pubhost + ":" + info->tlsport);
+          NodeId leader_id = raft->leader();
+          Store::Tx tx;
+          auto nodes_view = tx.get_view(*nodes);
+          auto info = nodes_view->get(leader_id);
+
+          if (info)
+          {
+            return jsonrpc::error_response(
+              ctx.req.seq_no,
+              jsonrpc::ErrorCodes::TX_NOT_LEADER,
+              info->pubhost + ":" + info->tlsport);
+          }
         }
-      }
-
-      return jsonrpc::error_response(
-        id, jsonrpc::ErrorCodes::TX_NOT_LEADER, "Not leader, leader unknown.");
-#else
-      if (!is_forwarded && can_forward)
-      {
-        // If the RPC has not already been forwarded and the frontend is
-        // allowed to forward, redirect it to the current leader
         return jsonrpc::error_response(
-          id, jsonrpc::RPC_FORWARDED, "RPC forwarded to leader");
+          ctx.req.seq_no,
+          jsonrpc::ErrorCodes::TX_NOT_LEADER,
+          "Not leader, leader unknown.");
       }
-
-      return jsonrpc::error_response(
-        id,
-        jsonrpc::ErrorCodes::RPC_NOT_FORWARDED,
-        "RPC could not be forwarded to leader.");
-#endif
     }
 
   public:
-    RpcFrontend(Store& tables_, bool can_forward_) :
-      RpcFrontend(tables_, nullptr, nullptr, can_forward_)
-    {}
+    RpcFrontend(Store& tables_) : RpcFrontend(tables_, nullptr, nullptr) {}
 
-    RpcFrontend(
-      Store& tables_,
-      ClientSignatures* client_sigs_,
-      Certs* certs_,
-      bool can_forward_) :
+    RpcFrontend(Store& tables_, ClientSignatures* client_sigs_, Certs* certs_) :
       tables(tables_),
       nodes(tables.get<Nodes>(Tables::NODES)),
       client_signatures(client_sigs_),
       certs(certs_),
       raft(nullptr),
-      history(nullptr),
-      can_forward(can_forward_)
+      history(nullptr)
     {
       auto get_commit = [this](Store::Tx& tx, const nlohmann::json& params) {
-        kv::Version commit;
+        const auto in = params.get<GetCommit::In>();
 
-        if (
-          params.is_array() && (params.size() > 0) &&
-          params[0].is_number_unsigned())
-        {
-          commit = params[0];
-        }
-        else
-        {
-          commit = tables.commit_version();
-        }
+        kv::Version commit = in.commit.value_or(tables.commit_version());
 
         update_raft();
 
@@ -218,20 +203,9 @@ namespace ccf
           "Failed to get commit info from Raft");
       };
 
-      auto get_tx_hist = [this](Store::Tx& tx, const nlohmann::json& params) {
-        nlohmann::json result;
-        nlohmann::json hist;
-        result["low"] = histogram.get_low();
-        result["high"] = histogram.get_high();
-        result["overflow"] = histogram.get_overflow();
-        result["underflow"] = histogram.get_underflow();
-        auto range_counts = histogram.get_range_count();
-        for (auto const& [range, count] : range_counts)
-        {
-          hist[range] = count;
-        }
-        result["histogram"] = hist;
-        return jsonrpc::success(GetTxHist::Out{result});
+      auto get_metrics = [this](Store::Tx& tx, const nlohmann::json& params) {
+        auto result = metrics.get_metrics();
+        return jsonrpc::success(result);
       };
 
       auto make_signature =
@@ -241,7 +215,7 @@ namespace ccf
           if (history != nullptr)
           {
             history->emit_signature();
-            return jsonrpc::success();
+            return jsonrpc::success(true);
           }
 
           return jsonrpc::error(
@@ -253,17 +227,17 @@ namespace ccf
           if ((nodes != nullptr) && (raft != nullptr))
           {
             NodeId leader_id = raft->leader();
-            nlohmann::json result;
 
             auto nodes_view = tx.get_view(*nodes);
             auto info = nodes_view->get(leader_id);
 
             if (info)
             {
-              result["leader_id"] = leader_id;
-              result["leader_host"] = info->pubhost;
-              result["leader_port"] = info->tlsport;
-              return jsonrpc::success(result);
+              GetLeaderInfo::Out out;
+              out.leader_id = leader_id;
+              out.leader_host = info->pubhost;
+              out.leader_port = info->tlsport;
+              return jsonrpc::success(out);
             }
           }
 
@@ -271,10 +245,48 @@ namespace ccf
             jsonrpc::ErrorCodes::TX_LEADER_UNKNOWN, "Leader unknown.");
         };
 
-      install(GeneralProcs::GET_COMMIT, get_commit, Read);
-      install(GeneralProcs::GET_TX_HIST, get_tx_hist, Read);
-      install(GeneralProcs::MK_SIGN, make_signature, Write);
-      install(GeneralProcs::GET_LEADER_INFO, get_leader_info, Read);
+      auto list_methods = [this](Store::Tx& tx, const nlohmann::json& params) {
+        ListMethods::Out out;
+
+        for (const auto& handler : handlers)
+        {
+          out.methods.push_back(handler.first);
+        }
+
+        std::sort(out.methods.begin(), out.methods.end());
+
+        return jsonrpc::success(out);
+      };
+
+      auto get_schema = [this](Store::Tx& tx, const nlohmann::json& params) {
+        const auto in = params.get<GetSchema::In>();
+
+        const auto it = handlers.find(in.method);
+        if (it == handlers.end())
+        {
+          return jsonrpc::error(
+            jsonrpc::ErrorCodes::INVALID_PARAMS,
+            fmt::format("Method {} not recognised", in.method));
+        }
+
+        const GetSchema::Out out{it->second.params_schema,
+                                 it->second.result_schema};
+
+        return jsonrpc::success(out);
+      };
+
+      install_with_auto_schema<GetCommit>(
+        GeneralProcs::GET_COMMIT, get_commit, Read);
+      install_with_auto_schema<void, GetMetrics::Out>(
+        GeneralProcs::GET_METRICS, get_metrics, Read);
+      install_with_auto_schema<void, bool>(
+        GeneralProcs::MK_SIGN, make_signature, Write);
+      install_with_auto_schema<void, GetLeaderInfo::Out>(
+        GeneralProcs::GET_LEADER_INFO, get_leader_info, Read);
+      install_with_auto_schema<void, ListMethods::Out>(
+        GeneralProcs::LIST_METHODS, list_methods, Read);
+      install_with_auto_schema<GetSchema>(
+        GeneralProcs::GET_SCHEMA, get_schema, Read);
     }
 
     void disable_request_storing()
@@ -289,9 +301,9 @@ namespace ccf
       ms_to_sig = sig_max_ms;
     }
 
-    void set_n2n_channels(std::shared_ptr<NodeToNode> n2n_channels_)
+    void set_cmd_forwarder(std::shared_ptr<AbstractForwarder> cmd_forwarder_)
     {
-      n2n_channels = n2n_channels_;
+      cmd_forwarder = cmd_forwarder_;
     }
 
     /** Install HandleFunction for method name
@@ -302,10 +314,34 @@ namespace ccf
      * @param method Method name
      * @param f Method implementation
      * @param rw Flag if method will Read, Write, MayWrite
+     * @param params_schema JSON schema for params object in requests
+     * @param result_schema JSON schema for result object in responses
+     * @param forwardable Allow method to be forwarded to leader
      */
-    void install(const std::string& method, HandleFunction f, ReadWrite rw)
+    void install(
+      const std::string& method,
+      HandleFunction f,
+      ReadWrite rw,
+      const nlohmann::json& params_schema = nlohmann::json::object(),
+      const nlohmann::json& result_schema = nlohmann::json::object(),
+      Forwardable forwardable = Forwardable::CanForward)
     {
-      handlers[method] = {f, rw};
+      handlers[method] = {f, rw, params_schema, result_schema, forwardable};
+    }
+
+    void install(
+      const std::string& method,
+      HandleFunction f,
+      ReadWrite rw,
+      Forwardable forwardable)
+    {
+      install(
+        method,
+        f,
+        rw,
+        nlohmann::json::object(),
+        nlohmann::json::object(),
+        forwardable);
     }
 
     /** Install MinimalHandleFunction for method name
@@ -315,13 +351,49 @@ namespace ccf
      *
      * @param method Method name
      * @param f Method implementation
-     * @param rw Flag if method will Read, Write, MayWrite
      */
-    void install(
-      const std::string& method, MinimalHandleFunction f, ReadWrite rw)
+    template <typename... Ts>
+    void install(const std::string& method, MinimalHandleFunction f, Ts&&... ts)
     {
-      handlers[method] = {
-        [f](RequestArgs& args) { return f(args.tx, args.params); }, rw};
+      install(
+        method,
+        [f](RequestArgs& args) { return f(args.tx, args.params); },
+        std::forward<Ts>(ts)...);
+    }
+
+    template <typename In, typename Out, typename F>
+    void install_with_auto_schema(
+      const std::string& method,
+      F&& f,
+      ReadWrite rw,
+      Forwardable forwardable = Forwardable::CanForward)
+    {
+      auto params_schema = nlohmann::json::object();
+      if constexpr (!std::is_same_v<In, void>)
+      {
+        params_schema = build_schema<In>(method + "/params");
+      }
+
+      auto result_schema = nlohmann::json::object();
+      if constexpr (!std::is_same_v<Out, void>)
+      {
+        result_schema = build_schema<Out>(method + "/result");
+      }
+
+      install(
+        method,
+        std::forward<F>(f),
+        rw,
+        params_schema,
+        result_schema,
+        forwardable);
+    }
+
+    template <typename T, typename... Ts>
+    void install_with_auto_schema(const std::string& method, Ts&&... ts)
+    {
+      install_with_auto_schema<typename T::In, typename T::Out>(
+        method, std::forward<Ts>(ts)...);
     }
 
     /** Set a default HandleFunction
@@ -348,28 +420,28 @@ namespace ccf
         return jsonrpc::Pack::MsgPack;
     }
 
-    /** Process a serialised input with the associated caller certificate
+    /** Process a serialised command with the associated caller certificate
      *
      * If a RPC that requires writing to the kv store is processed on a
      * follower, the serialised RPC is forwarded to the current network leader.
      *
-     * @param caller Caller certificate
+     * @param ctx Context for this RPC
      * @param input Serialised JSON RPC
      */
     std::vector<uint8_t> process(
-      CBuffer caller, const std::vector<uint8_t>& input) override
+      enclave::RPCContext& ctx, const std::vector<uint8_t>& input) override
     {
       Store::Tx tx;
 
-      auto pack = detect_pack(input);
-      if (!pack.has_value())
+      ctx.pack = detect_pack(input);
+      if (!ctx.pack.has_value())
         return jsonrpc::pack(
           jsonrpc::error_response(
             0, jsonrpc::ErrorCodes::INVALID_REQUEST, "Empty request."),
           jsonrpc::Pack::Text);
 
       // Retrieve id of caller
-      auto caller_id = valid_caller(tx, caller);
+      auto caller_id = valid_caller(tx, ctx.caller_cert);
       if (!caller_id.has_value())
       {
         return jsonrpc::pack(
@@ -377,6 +449,89 @@ namespace ccf
             0,
             jsonrpc::ErrorCodes::INVALID_CALLER_ID,
             "No corresponding caller entry exists."),
+          ctx.pack.value());
+      }
+
+      auto rpc = unpack_json(input, ctx.pack.value());
+      if (!rpc.first)
+        return jsonrpc::pack(rpc.second, ctx.pack.value());
+
+      auto rep = process_json(ctx, tx, caller_id.value(), rpc.second);
+
+      // If necessary, forward the RPC to the current leader
+      if (!rep.has_value())
+      {
+        if (raft != nullptr)
+        {
+          auto leader_id = raft->leader();
+          auto local_id = raft->id();
+
+          if (
+            leader_id != NoNode &&
+            cmd_forwarder->forward_command(
+              ctx, local_id, leader_id, caller_id.value(), input))
+          {
+            // Indicate that the RPC has been forwarded to leader
+            LOG_DEBUG_FMT("RPC forwarded to leader {}", leader_id);
+            ctx.is_pending = true;
+            return {};
+          }
+        }
+        return jsonrpc::pack(
+          jsonrpc::error_response(
+            0,
+            jsonrpc::ErrorCodes::RPC_NOT_FORWARDED,
+            "RPC could not be forwarded to leader."),
+          ctx.pack.value());
+      }
+
+      return jsonrpc::pack(rep.value(), ctx.pack.value());
+    }
+
+    /** Process a serialised input that has been forwarded from another node
+     *
+     * This function assumes that ctx contains the caller_id as read by the
+     * forwarding follower.
+     *
+     * @param ctx Context for this forwarded RPC
+     * @param input Serialised JSON RPC
+     *
+     * @return Serialised reply to send back to forwarder node
+     */
+    std::vector<uint8_t> process_forwarded(
+      enclave::RPCContext& ctx, const std::vector<uint8_t>& input) override
+    {
+      if (!ctx.fwd.has_value())
+        throw std::logic_error(
+          "Processing forwarded command with unitialised forwarded context");
+
+      Store::Tx tx;
+
+      // For forwarded command, caller is empty and caller_id should be used
+      // instead.
+      CBuffer caller;
+
+      update_raft();
+      ctx.fwd->leader_id = raft->id();
+
+      auto pack = detect_pack(input);
+      if (!pack.has_value())
+        return jsonrpc::pack(
+          jsonrpc::error_response(
+            0,
+            jsonrpc::ErrorCodes::INVALID_REQUEST,
+            "Empty forwarded request."),
+          jsonrpc::Pack::Text);
+
+      // If the RPC was forwarded, assume that the caller has already been
+      // verified
+      if (certs && ctx.fwd->caller_id == INVALID_ID)
+      {
+        return jsonrpc::pack(
+          jsonrpc::error_response(
+            0,
+            jsonrpc::ErrorCodes::INVALID_CALLER_ID,
+            "No corresponding caller entry exists (forwarded)."),
           pack.value());
       }
 
@@ -384,132 +539,68 @@ namespace ccf
       if (!rpc.first)
         return jsonrpc::pack(rpc.second, pack.value());
 
-      auto rep = process_json(tx, caller, caller_id.value(), rpc.second, false);
-
-      // If necessary, redirect the RPC to the leader
-      if (
-        rep.find(jsonrpc::ERR) != rep.end() &&
-        rep[jsonrpc::ERR][jsonrpc::CODE] == jsonrpc::RPC_FORWARDED)
+      auto rep = process_json(ctx, tx, ctx.fwd->caller_id, rpc.second);
+      if (!rep.has_value())
       {
-        // TODO(#important): If the RPC has been redirected, wait for the
-        // reply from the leader before replying to the client
-        auto leader_id = raft->leader();
-        LOG_DEBUG << "RPC forwarded to leader " << leader_id << std::endl;
-
-        if (
-          leader_id != NoNode &&
-          !n2n_channels->forward(leader_id, caller_id.value(), input))
-        {
-          return jsonrpc::pack(
-            jsonrpc::error_response(
-              rep[jsonrpc::ID],
-              jsonrpc::ErrorCodes::RPC_NOT_FORWARDED,
-              "RPC could not be forwarded to leader."),
-            pack.value());
-        }
+        // This should never be called when process_json is called with a
+        // forwarded RPC context
+        throw std::logic_error("Forwarded RPC cannot be forwarded");
       }
 
-      return jsonrpc::pack(rep, pack.value());
+      return jsonrpc::pack(rep.value(), pack.value());
     }
 
-    /** Process a serialised input that has been forwarded from another node
-     *
-     * This function assumes that the forwarded message contains the caller id.
-     *
-     * @param data Pointer to forwarded serialised JSON RPC
-     * @param size Size of forwarded serialised JSON RPC
-     *
-     * @return Serialised reply to send back to forwarder node
-     */
-    std::vector<uint8_t> process_forwarded(
-      const uint8_t* data, size_t size) override
-    {
-      Store::Tx tx;
-
-      // If the RPC was forwarded by another node, assume that the caller has
-      // already been verified
-      CBuffer caller;
-
-      std::pair<CallerId, std::vector<uint8_t>> fwd;
-      try
-      {
-        fwd = n2n_channels->recv_forwarded(data, size);
-      }
-      catch (const std::exception& e)
-      {
-        return jsonrpc::pack(
-          jsonrpc::error_response(
-            0,
-            jsonrpc::ErrorCodes::INTERNAL_ERROR,
-            "Forwarded RPC is malformed."),
-          jsonrpc::Pack::Text);
-      }
-
-      if (fwd.first == INVALID_ID)
-      {
-        return jsonrpc::pack(
-          jsonrpc::error_response(
-            0,
-            jsonrpc::ErrorCodes::INVALID_CALLER_ID,
-            "No corresponding caller entry exists."),
-          jsonrpc::Pack::Text);
-      }
-
-      auto pack = detect_pack(fwd.second);
-      if (!pack.has_value())
-        return jsonrpc::pack(
-          jsonrpc::error_response(
-            0, jsonrpc::ErrorCodes::INVALID_REQUEST, "Empty request."),
-          jsonrpc::Pack::Text);
-
-      auto rpc = unpack_json(fwd.second, pack.value());
-      if (!rpc.first)
-        return jsonrpc::pack(rpc.second, pack.value());
-
-      // TODO(#important): For now, the return value of this function is
-      // ignored. The JSON RPC result of the transaction execution
-      // should be returned to the node that forwarded the RPC.
-      auto rep = process_json(tx, caller, fwd.first, rpc.second, true);
-      return jsonrpc::pack(rep, pack.value());
-    }
-
-    nlohmann::json process_json(
+    std::optional<nlohmann::json> process_json(
+      enclave::RPCContext& ctx,
       Store::Tx& tx,
-      const CBuffer& caller,
       CallerId caller_id,
-      const nlohmann::json& full_rpc,
-      bool is_forwarded = false)
+      const nlohmann::json& full_rpc)
     {
       auto rpc_ = &full_rpc;
+      SignedReq signed_request;
       if (full_rpc.find(jsonrpc::SIG) != full_rpc.end())
       {
+        const auto& req = full_rpc.at(jsonrpc::REQ);
+
         // TODO(#important): Signature should only be verified for a Write
         // RPC
         if (!verify_client_signature(
-              tx, caller, caller_id, full_rpc, is_forwarded))
+              tx,
+              ctx.caller_cert,
+              caller_id,
+              full_rpc,
+              ctx.fwd.has_value(),
+              signed_request))
         {
           return jsonrpc::error_response(
-            full_rpc[jsonrpc::REQ][jsonrpc::ID],
+            req.at(jsonrpc::ID),
             jsonrpc::ErrorCodes::INVALID_CLIENT_SIGNATURE,
             "Failed to verify client signature.");
         }
-        rpc_ = &full_rpc[jsonrpc::REQ];
+        rpc_ = &req;
       }
       auto& rpc = *rpc_;
 
-      if (rpc[jsonrpc::JSON_RPC] != jsonrpc::RPC_VERSION)
+      std::string method = rpc.at(jsonrpc::METHOD);
+      ctx.req.seq_no = rpc.at(jsonrpc::ID);
+
+      if (rpc.at(jsonrpc::JSON_RPC) != jsonrpc::RPC_VERSION)
         return jsonrpc::error_response(
-          rpc[jsonrpc::ID],
+          ctx.req.seq_no,
           jsonrpc::ErrorCodes::INVALID_REQUEST,
           "Wrong JSON-RPC version.");
 
-      std::string method = rpc[jsonrpc::METHOD];
-      jsonrpc::SeqNo id = rpc[jsonrpc::ID];
-
-      const nlohmann::json params = rpc[jsonrpc::PARAMS];
-      if (!params.is_array() && !params.is_object() && !params.is_null())
+      const auto params_it = rpc.find(jsonrpc::PARAMS);
+      if (
+        params_it != rpc.end() &&
+        (!params_it->is_array() && !params_it->is_object()))
         return jsonrpc::error_response(
-          id, jsonrpc::ErrorCodes::INVALID_REQUEST, "Invalid params.");
+          ctx.req.seq_no,
+          jsonrpc::ErrorCodes::INVALID_REQUEST,
+          "If present, parameters must be an array or object");
+
+      const auto& params =
+        params_it == rpc.end() ? nlohmann::json(nullptr) : *params_it;
 
       Handler* handler = nullptr;
       auto search = handlers.find(method);
@@ -519,7 +610,7 @@ namespace ccf
         handler = &*default_handler;
       else
         return jsonrpc::error_response(
-          id, jsonrpc::ErrorCodes::METHOD_NOT_FOUND, method);
+          ctx.req.seq_no, jsonrpc::ErrorCodes::METHOD_NOT_FOUND, method);
 
       update_raft();
       update_history();
@@ -534,19 +625,20 @@ namespace ccf
             break;
 
           case Write:
-            return redirect_json(id, is_forwarded);
+            return forward_or_redirect_json(ctx, handler->forwardable);
             break;
 
           case MayWrite:
             bool readonly = rpc.value(jsonrpc::READONLY, true);
             if (!readonly)
-              return redirect_json(id, is_forwarded);
+              return forward_or_redirect_json(ctx, handler->forwardable);
             break;
         }
       }
 
       auto func = handler->func;
-      auto args = RequestArgs{tx, caller, caller_id, method, params};
+      auto args =
+        RequestArgs{ctx, tx, caller_id, method, params, signed_request};
 
       tx_count++;
 
@@ -557,14 +649,14 @@ namespace ccf
           auto tx_result = func(args);
 
           if (!tx_result.first)
-            return jsonrpc::error_response(id, tx_result.second);
+            return jsonrpc::error_response(ctx.req.seq_no, tx_result.second);
 
           switch (tx.commit())
           {
             case kv::CommitSuccess::OK:
             {
               nlohmann::json result =
-                jsonrpc::result_response(id, tx_result.second);
+                jsonrpc::result_response(ctx.req.seq_no, tx_result.second);
 
               auto cv = tx.commit_version();
               if (cv == 0)
@@ -591,7 +683,7 @@ namespace ccf
 
             case kv::CommitSuccess::NO_REPLICATE:
               return jsonrpc::error_response(
-                id,
+                ctx.req.seq_no,
                 jsonrpc::ErrorCodes::TX_FAILED_TO_REPLICATE,
                 "Transaction failed to replicate.");
               break;
@@ -599,12 +691,18 @@ namespace ccf
         }
         catch (const RpcException& e)
         {
-          return jsonrpc::error_response(id, e.error_id, e.msg);
+          return jsonrpc::error_response(ctx.req.seq_no, e.error_id, e.msg);
+        }
+        catch (const JsonParseError& e)
+        {
+          const auto err = fmt::format("At {}:\n\t{}", e.pointer(), e.what());
+          return jsonrpc::error_response(
+            ctx.req.seq_no, jsonrpc::ErrorCodes::PARSE_ERROR, err);
         }
         catch (const std::exception& e)
         {
           return jsonrpc::error_response(
-            id, jsonrpc::ErrorCodes::INTERNAL_ERROR, e.what());
+            ctx.req.seq_no, jsonrpc::ErrorCodes::INTERNAL_ERROR, e.what());
         }
       }
     }
@@ -616,12 +714,24 @@ namespace ccf
       const nlohmann::json& full_rpc,
       bool is_forwarded)
     {
+      SignedReq signed_request;
+      return verify_client_signature(
+        tx, caller, caller_id, full_rpc, is_forwarded, signed_request);
+    }
+
+    bool verify_client_signature(
+      Store::Tx& tx,
+      const CBuffer& caller,
+      const CallerId& caller_id,
+      const nlohmann::json& full_rpc,
+      bool is_forwarded,
+      SignedReq& signed_request)
+    {
       if (!client_signatures)
         return false;
 
-      SignedReq signed_request(full_rpc);
+      signed_request = full_rpc;
 
-#ifndef DISABLE_CLIENT_SIGNATURE_VERIFICATION
       // If the RPC is forwarded, assume that the signature has already been
       // verified by the follower
       if (!is_forwarded)
@@ -637,7 +747,6 @@ namespace ccf
               signed_request.req, signed_request.sig))
           return false;
       }
-#endif
 
       // TODO(#important): Request should only be stored on the leader
       if (request_storing_disabled)
@@ -658,14 +767,11 @@ namespace ccf
 
     void tick(std::chrono::milliseconds elapsed) override
     {
-      // calculate how many tx/sec we have processed in this tick
-      auto duration = elapsed.count() / 1000.0;
-      auto tx_rate = tx_count / duration;
+      metrics.track_tx_rates(elapsed, tx_count);
       // reset tx_counter for next tick interval
       tx_count = 0;
-      histogram.record(tx_rate);
-
       // TODO(#refactoring): move this to NodeState::tick
+      update_raft();
       if ((raft != nullptr) && raft->is_leader())
       {
         if (elapsed < ms_to_sig)
@@ -673,6 +779,7 @@ namespace ccf
           ms_to_sig -= elapsed;
           return;
         }
+
         ms_to_sig = sig_max_ms;
         if (history && tables.commit_gap() > 0)
           history->emit_signature();

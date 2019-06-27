@@ -4,6 +4,7 @@
 #include "ds/files.h"
 #include "node/entities.h"
 #include "node/members.h"
+#include "node/nodes.h"
 #include "node/proposals.h"
 #include "node/rpc/jsonrpc.h"
 #include "node/script.h"
@@ -12,6 +13,7 @@
 #include "tls/keypair.h"
 
 #include <CLI11/CLI11.hpp>
+#include <limits>
 
 using namespace ccf;
 using namespace files;
@@ -20,6 +22,7 @@ using namespace std;
 using namespace nlohmann;
 
 constexpr auto members_sni = "members";
+constexpr NodeId INVALID_NODE_ID = std::numeric_limits<NodeId>::max();
 
 static const string add_member_proposal(R"xxx(
       tables, member_cert = ...
@@ -56,6 +59,11 @@ static const string read_proposals = R"xxx(
 static const string accept_recovery_proposal(R"xxx(
       tables, sealed_secrets = ...
       return Calls:call("accept_recovery", sealed_secrets)
+    )xxx");
+
+static const string accept_code_proposal(R"xxx(
+      tables, code_digest = ...
+      return Calls:call("new_code", code_digest)
     )xxx");
 
 template <typename T>
@@ -103,6 +111,21 @@ void display(const json& proposals)
   }
 }
 
+template <size_t SZ>
+void hex_str_to_bytes(const std::string& src, std::array<uint8_t, SZ>& dst)
+{
+  if (src.length() != SZ * 2)
+  {
+    throw logic_error("Invalid code id length");
+  }
+
+  for (size_t i = 0; i < SZ; ++i)
+  {
+    auto cur_byte_str = src.substr(i * 2, 2);
+    dst[i] = static_cast<uint8_t>(strtoul(cur_byte_str.c_str(), nullptr, 16));
+  }
+}
+
 void add_new(
   RpcTlsClient& tls_connection, const string& cert_file, const string& proposal)
 {
@@ -120,6 +143,34 @@ void submit_accept_node(RpcTlsClient& tls_connection, NodeId node_id)
   const auto response =
     json::from_msgpack(tls_connection.call("propose", params));
   cout << response.dump() << endl;
+}
+
+void submit_accept_code(RpcTlsClient& tls_connection, std::string& new_code_id)
+{
+  CodeDigest digest;
+  // we expect a string representation of the code id,
+  // so every byte is represented by 2 characters
+  // before conversion
+  hex_str_to_bytes<ccf::CODE_DIGEST_BYTES>(new_code_id, digest);
+
+  auto params = proposal_params<CodeDigest>(accept_code_proposal, digest);
+  const auto response =
+    json::from_msgpack(tls_connection.call("propose", params));
+  cout << response.dump() << endl;
+}
+
+NodeId submit_add_node(RpcTlsClient& tls_connection, NodeInfo& node_info)
+{
+  const auto response =
+    json::from_msgpack(tls_connection.call("add_node", node_info));
+
+  cout << response.dump() << endl;
+
+  auto result = response.find("result");
+  if (result != response.end())
+    return result->get<NodeId>();
+
+  return INVALID_NODE_ID;
 }
 
 void submit_accept_recovery(
@@ -267,6 +318,23 @@ int main(int argc, char** argv)
   auto ack =
     app.add_subcommand("ack", "Acknowledge self added into the network");
 
+  std::string nodes_file;
+  auto add_node = app.add_subcommand("add_node", "Add a node");
+  add_node
+    ->add_option(
+      "--nodes_to_add", nodes_file, "The file containing the nodes to be added")
+    ->required(true);
+
+  std::string new_code_id;
+  auto add_code = app.add_subcommand("add_code", "Support executing new code");
+  add_code
+    ->add_option(
+      "--new_code_id",
+      new_code_id,
+      "The new code id (a 64 character string representing a 32 byte hash "
+      "value in hex format)")
+    ->required(true);
+
   NodeId node_id;
   auto accept_node = app.add_subcommand("accept_node", "Make a node trusted");
   accept_node->add_option("--id", node_id, "The node id")->required(true);
@@ -324,6 +392,27 @@ int main(int argc, char** argv)
     if (*add_user)
     {
       add_new(*tls_connection, user_cert_file, add_user_proposal);
+    }
+
+    if (*add_node)
+    {
+      const auto j_nodes = files::slurp_json(nodes_file);
+
+      if (!j_nodes.is_array())
+      {
+        throw logic_error("Expected " + nodes_file + " to contain array");
+      }
+
+      for (auto node : j_nodes)
+      {
+        NodeInfo node_info = node;
+        submit_add_node(*tls_connection, node_info);
+      }
+    }
+
+    if (*add_code)
+    {
+      submit_accept_code(*tls_connection, new_code_id);
     }
 
     if (*accept_node)

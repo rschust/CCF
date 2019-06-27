@@ -8,8 +8,8 @@ To start up a network, operators should start up each node separately by running
 
 .. code-block:: bash
 
-    $ cchost --enclave-file=/path/to/application --raft-host=raft_ip --raft-port=raft_port
-    --tls-host=tls_ip --tls-pubhost=tls_public_ip --tls-port=tls_port --ledger-file=ledger_file
+    $ cchost --enclave-file=/path/to/application --raft-host=<raft_ip> --raft-port=<raft_port>
+    --tls-host=<tls_ip> --tls-pubhost=<tls_public_ip> --tls-port=<tls_port> --ledger-file=/path/to/ledger
     --node-cert-file=/path/to/node_certificate --quote-file=/path/to/quote
 
     <Some log messages confirming that the enclave has been created>
@@ -68,7 +68,7 @@ Once the initial nodes are running and the initial state of the network is ready
 
 .. code-block:: bash
 
-    $ client --host=<node0_ip> --port=<node0_tlsport> startnetwork --server-cert=<node0_cert> --req=startNetwork.json
+    $ client --host=<node0_ip> --port=<node0_tlsport> startnetwork --ca=<node0_cert> --req=startNetwork.json
 
 When executing the ``startNetwork.json`` RPC request, the target node deserialises the genesis transaction and immediately becomes the Raft leader of the new single-node network. Business transactions can then be issued by users and will commit immediately.
 
@@ -85,7 +85,7 @@ Once done, each additional node (here, node 1) can join the existing network by 
 
 .. code-block:: bash
 
-    $ client --host=<node1_ip> --port=<node1_tlsport> joinnetwork --server-cert=<node1_cert> --req=joinNetwork.json
+    $ client --host=<node1_ip> --port=<node1_tlsport> joinnetwork --ca=<node1_cert> --req=joinNetwork.json
 
 When executing the ``joinNetwork.json`` RPC, the target node initiates an enclave-to-enclave TLS connection to the network leader to retrieve the network secrets required to decrypt the serialised replicated transactions. Once the join protocol completes, the new node becomes a follower of the Raft network and starts replicating transactions executed by the leader.
 
@@ -108,10 +108,11 @@ When executing the ``joinNetwork.json`` RPC, the target node initiates an enclav
 
         Members->>+Follower: join network
         Follower->>+Leader: join network (over TLS)
-        Follower-->>Members: join network response
         Leader->>+Follower: Network Secrets (over TLS)
 
         Note over Follower: Part of Private Network
+
+        Follower-->>Members: join network response
 
         loop Business transactions
             Users->>+Leader: Tx
@@ -119,4 +120,14 @@ When executing the ``joinNetwork.json`` RPC, the target node initiates an enclav
             Leader->>+Follower: Serialised Tx
         end
 
+
+Supporting code updates
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The code being executed by the nodes might need to be updated from time to time.
+This can be achieved by creating a "new_code" proposal and passing the hash of the signed code. Once the proposal has been accepted, nodes running the new code may join the network. This allows stopping nodes running older versions of the code.
+
+.. note:: It is important to keep the code compatible with the previous version, since there will be a point in time in which the new code is running on at least one node, while the other version is running on a different node.
+
+.. note:: The safest way to restart or replace nodes is by stopping a single node running the old version and starting a node running the new version as a sequence of operations, in order to avoid a situation in which most nodes have been stopped, and new nodes will not be able to join since it would be impossible to reach a majority of nodes agreeing to accept new nodes (this restriction is imposed by the consensus algorithm).
 

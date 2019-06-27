@@ -1,18 +1,18 @@
 .text
 .global add1
 add1:
+  push %rdi
   push %rsi
   mov %rcx, %rdi
   mov %rdx, %rsi
   mov %r8, %rdx
-  mov %rdx, %rcx
   xor %r8, %r8
   xor %r9, %r9
   xor %r10, %r10
   xor %r11, %r11
   xor %rax, %rax
-  addq 0(%rsi), %rcx
-  movq %rcx, 0(%rdi)
+  addq 0(%rsi), %rdx
+  movq %rdx, 0(%rdi)
   adcxq 8(%rsi), %r8
   movq %r8, 8(%rdi)
   adcxq 16(%rsi), %r9
@@ -21,10 +21,12 @@ add1:
   movq %r10, 24(%rdi)
   adcx %r11, %rax
   pop %rsi
+  pop %rdi
   ret
 
-.global fadd
-fadd:
+.global fadd_
+fadd_:
+  push %rdi
   push %rsi
   mov %rcx, %rdi
   mov %rdx, %rsi
@@ -53,10 +55,12 @@ fadd:
   add %rax, %r8
   movq %r8, 0(%rdi)
   pop %rsi
+  pop %rdi
   ret
 
-.global fsub
-fsub:
+.global fsub_
+fsub_:
+  push %rdi
   push %rsi
   mov %rcx, %rdi
   mov %rdx, %rsi
@@ -84,10 +88,12 @@ fsub:
   movq %r10, 16(%rdi)
   movq %r11, 24(%rdi)
   pop %rsi
+  pop %rdi
   ret
 
 .global fmul1
 fmul1:
+  push %rdi
   push %r12
   push %r13
   push %rsi
@@ -119,18 +125,22 @@ fmul1:
   pop %rsi
   pop %r13
   pop %r12
+  pop %rdi
   ret
 
-.global fmul_v
-fmul_v:
+.global fmul_
+fmul_:
   push %r12
   push %r13
   push %r14
+  push %r15
   push %rsi
+  push %rdi
   mov %rcx, %rdi
   mov %rdx, %rsi
+  mov %r8, %rdx
   mov %r9, %rcx
-  push %r8
+  mov %rdx, %r15
   movq 0(%rsi), %rdx
   mulxq 0(%rcx), %r8, %r9
   xor %r10, %r10
@@ -205,7 +215,7 @@ fmul_v:
   adcx %r8, %rax
   movq %rax, 56(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %r15, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -233,22 +243,27 @@ fmul_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 0(%rdi)
+  pop %rdi
   pop %rsi
+  pop %r15
   pop %r14
   pop %r13
   pop %r12
   ret
 
-.global fmul2_v
-fmul2_v:
+.global fmul2
+fmul2:
   push %r12
   push %r13
   push %r14
+  push %r15
   push %rsi
+  push %rdi
   mov %rcx, %rdi
   mov %rdx, %rsi
+  mov %r8, %rdx
   mov %r9, %rcx
-  push %r8
+  mov %rdx, %r15
   movq 0(%rsi), %rdx
   mulxq 0(%rcx), %r8, %r9
   xor %r10, %r10
@@ -396,7 +411,7 @@ fmul2_v:
   adcx %r8, %rax
   movq %rax, 120(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %r15, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -451,22 +466,27 @@ fmul2_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 32(%rdi)
+  pop %rdi
   pop %rsi
+  pop %r15
   pop %r14
   pop %r13
   pop %r12
   ret
 
-.global fsqr_v
-fsqr_v:
+.global fsqr
+fsqr:
   push %r15
   push %r12
   push %r13
   push %r14
+  push %rbx
   push %rsi
+  push %rdi
   mov %rcx, %rdi
   mov %rdx, %rsi
-  push %r8
+  mov %r8, %rdx
+  mov %rdx, %rbx
   movq 0(%rsi), %rdx
   mulxq 8(%rsi), %r8, %r14
   xor %r15, %r15
@@ -520,7 +540,7 @@ fsqr_v:
   adcx %rcx, %r14
   movq %r14, 56(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %rbx, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -548,23 +568,28 @@ fsqr_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 0(%rdi)
+  pop %rdi
   pop %rsi
+  pop %rbx
   pop %r14
   pop %r13
   pop %r12
   pop %r15
   ret
 
-.global fsqr2_v
-fsqr2_v:
+.global fsqr2
+fsqr2:
   push %r15
   push %r12
   push %r13
   push %r14
+  push %rbx
   push %rsi
+  push %rdi
   mov %rcx, %rdi
   mov %rdx, %rsi
-  push %r8
+  mov %r8, %rdx
+  mov %rdx, %rbx
   movq 0(%rsi), %rdx
   mulxq 8(%rsi), %r8, %r14
   xor %r15, %r15
@@ -670,7 +695,7 @@ fsqr2_v:
   adcx %rcx, %r14
   movq %r14, 120(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %rbx, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -725,7 +750,9 @@ fsqr2_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 32(%rdi)
+  pop %rdi
   pop %rsi
+  pop %rbx
   pop %r14
   pop %r13
   pop %r12
@@ -734,6 +761,7 @@ fsqr2_v:
 
 .global cswap2
 cswap2:
+  push %rdi
   push %rsi
   mov %rcx, %rdi
   mov %rdx, %rsi
@@ -796,6 +824,7 @@ cswap2:
   movq %r8, 56(%rdi)
   movq %r9, 56(%rsi)
   pop %rsi
+  pop %rdi
   ret
 
 

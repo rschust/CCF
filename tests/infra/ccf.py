@@ -6,6 +6,7 @@ import time
 import logging
 from contextlib import contextmanager
 from glob import glob
+from enum import Enum
 import infra.jsonrpc
 import infra.remote
 import infra.path
@@ -16,6 +17,12 @@ import re
 from loguru import logger as LOG
 
 logging.getLogger("paramiko").setLevel(logging.WARNING)
+
+
+class NodeNetworkState(Enum):
+    stopped = 0
+    started = 1
+    joined = 2
 
 
 @contextmanager
@@ -65,7 +72,7 @@ class Network:
     node_args_to_forward = [
         "enclave_type",
         "log_level",
-        "expect_quote",
+        "ignore_quote",
         "sig_max_tx",
         "sig_max_ms",
         "election_timeout",
@@ -119,20 +126,26 @@ class Network:
             forwarded_args = {
                 arg: dict_args[arg] for arg in Network.node_args_to_forward
             }
-            node.start(
-                lib_name=args.package, node_status=node_status[i], **forwarded_args
-            )
+            try:
+                node.start(
+                    lib_name=args.package,
+                    node_status=node_status[i],
+                    workspace=args.workspace,
+                    label=args.label,
+                    other_quote=None,
+                    other_quoted_data=None,
+                    **forwarded_args,
+                )
+            except Exception:
+                LOG.exception("Failed to start node {}".format(i))
+                raise
         LOG.info("All remotes started")
 
-        if args.remote_attestation_ca:
-            infra.proc.ccall(
-                "cp", args.remote_attestation_ca, args.build_dir
-            ).check_returncode()
         if args.app_script:
             infra.proc.ccall("cp", args.app_script, args.build_dir).check_returncode()
         if args.gov_script:
             infra.proc.ccall("cp", args.gov_script, args.build_dir).check_returncode()
-        LOG.info("Attestation root and lua scripts copied")
+        LOG.info("Lua scripts copied")
 
         self.nodes_json()
         self.add_members([1, 2, 3])
@@ -146,33 +159,8 @@ class Network:
 
         for node in self.nodes[1:]:
             node.join_network()
-        LOG.info("All nodes joined Network")
 
-        node_id = 1
-
-        # If there are more than one node in the network, wait until they
-        # have joined the network
-        for node in self.nodes[1:]:
-            if args.wait_with_client:
-                with node.management_client() as c:
-                    for _ in range(15):
-                        id = c.request(method="getCommit", params={})
-                        res = c.response(id).result
-                        if res[b"commit"] >= 2 and res[b"term"] == 2:
-                            LOG.info("Node {} has joined (client)".format(node_id))
-                            break
-                        time.sleep(1)
-                    else:
-                        raise ValueError(
-                            "Timed out waiting for initial commit on node {}, state was {}".format(
-                                node_id, res
-                            )
-                        )
-            else:
-                node.wait_until_ready(15)
-                LOG.info("Node {} has joined (native client)".format(node_id))
-            node_id += 1
-        LOG.info("All nodes joined Network")
+        LOG.success("All nodes joined Network")
 
         return primary, self.nodes[1:]
 
@@ -189,28 +177,30 @@ class Network:
         LOG.info("Starting nodes on {}".format(hosts))
 
         for i, node in enumerate(self.nodes):
-            dict_args = vars(args)
             forwarded_args = {
-                arg: dict_args[arg] for arg in Network.node_args_to_forward
+                arg: getattr(args, arg)
+                for arg in infra.ccf.Network.node_args_to_forward
             }
-            node.start(
-                lib_name=args.package,
-                node_status=node_status[i],
-                ledger_file=ledger_file,
-                sealed_secrets=sealed_secrets,
-                **forwarded_args,
-            )
+            try:
+                node.start(
+                    lib_name=args.package,
+                    node_status=node_status[i],
+                    ledger_file=ledger_file,
+                    sealed_secrets=sealed_secrets,
+                    workspace=args.workspace,
+                    label=args.label,
+                    **forwarded_args,
+                )
+            except Exception:
+                LOG.exception("Failed to start recovery node {}".format(i))
+                raise
         LOG.info("All remotes started")
 
-        if args.remote_attestation_ca:
-            infra.proc.ccall(
-                "cp", args.remote_attestation_ca, args.build_dir
-            ).check_returncode()
         if args.app_script:
             infra.proc.ccall("cp", args.app_script, args.build_dir).check_returncode()
         if args.gov_script:
             infra.proc.ccall("cp", args.gov_script, args.build_dir).check_returncode()
-        LOG.info("Attestation root and lua scripts copied")
+        LOG.info("Lua scripts copied")
 
         primary = self.nodes[0]
         return primary, self.nodes[1:]
@@ -219,6 +209,35 @@ class Network:
         node = Node(node_id, host, debug, perf, recovery)
         self.nodes.append(node)
         return node
+
+    def remove_node(self):
+        last_node = self.nodes.pop()
+
+    def create_and_add_node(self, lib_name, args, should_succeed=True, node_id=None):
+        forwarded_args = {
+            arg: getattr(args, arg) for arg in infra.ccf.Network.node_args_to_forward
+        }
+        if node_id is None:
+            node_id = self.get_next_node_id()
+        node_status = args.node_status or "pending"
+        new_node = self.create_node(node_id, "localhost")
+        new_node.start(
+            lib_name=lib_name,
+            node_status=node_status,
+            workspace=args.workspace,
+            label=args.label,
+            **forwarded_args,
+        )
+        new_node_info = new_node.remote.info()
+
+        with self.find_leader()[0].member_client(format="json") as member_client:
+            j_result = member_client.rpc("add_node", new_node_info)
+
+        if not should_succeed:
+            self.remove_node()
+            return (False, j_result.error["code"])
+
+        return (True, new_node, j_result.result["id"])
 
     def add_members(self, members):
         self.members.extend(members)
@@ -291,8 +310,6 @@ class Network:
                 if res.error is None:
                     leader_id = res.result["leader_id"]
                     term = res.term
-                    LOG.error(leader_id)
-                    LOG.error(term)
                     break
                 else:
                     assert (
@@ -301,6 +318,30 @@ class Network:
         assert leader_id is not None, "No leader found"
 
         return (self.nodes[leader_id], term)
+
+    def wait_for_node_commit_sync(self):
+        """
+        Wait for commit level to get in sync on all nodes. This is expected to
+        happen once CFTR has been established, in the absence of new transactions.
+        """
+        for _ in range(3):
+            commits = []
+            for node in (node for node in self.nodes if node.is_joined()):
+                with node.management_client() as c:
+                    id = c.request("getCommit", {})
+                    commits.append(c.response(id).commit)
+            if [commits[0]] * len(commits) == commits:
+                break
+            time.sleep(1)
+        assert [commits[0]] * len(commits) == commits, "All nodes at the same commit"
+
+    def get_primary(self):
+        return self.nodes[0]
+
+    def get_next_node_id(self):
+        if len(self.nodes):
+            return self.nodes[-1].node_id + 1
+        return 0
 
 
 class Checker:
@@ -328,7 +369,9 @@ class Checker:
 
             if self.management_client:
                 for i in range(timeout * 10):
-                    r = self.management_client.rpc("getCommit", [rpc_result.commit])
+                    r = self.management_client.rpc(
+                        "getCommit", {"commit": rpc_result.commit}
+                    )
                     if (
                         r.global_commit >= rpc_result.commit
                         and r.result["term"] == rpc_result.term
@@ -346,15 +389,62 @@ class Checker:
                 raise TimeoutError("Timed out waiting for notification")
 
 
+@contextmanager
+def node(
+    node_id,
+    host,
+    build_directory,
+    debug=False,
+    perf=False,
+    recovery=False,
+    verify_quote=False,
+    pdb=False,
+):
+    """
+    Context manager for Node class.
+    :param node_id: unique ID of node
+    :param build_directory: the build directory
+    :param host: node's hostname
+    :param debug: default: False. If set, node will not start (user is prompted to start them manually)
+    :param perf: default: False. If set, node will run under perf record
+    :param recovery: default: False. If set, node will start in recovery
+    :param verify_quote: default: False. If set, node will only verify a quote and shutdown immediately.
+    :return: a Node instance that can be used to build a CCF network
+    """
+    with infra.path.working_dir(build_directory):
+        node = Node(
+            node_id=node_id,
+            host=host,
+            debug=debug,
+            perf=perf,
+            recovery=recovery,
+            verify_quote=verify_quote,
+        )
+        try:
+            yield node
+        except Exception:
+            if pdb:
+                import pdb
+
+                pdb.set_trace()
+            else:
+                raise
+        finally:
+            node.stop()
+
+
 class Node:
-    def __init__(self, node_id, host, debug=False, perf=False, recovery=False):
+    def __init__(
+        self, node_id, host, debug=False, perf=False, recovery=False, verify_quote=False
+    ):
         self.node_id = node_id
         self.debug = debug
         self.perf = perf
         self.recovery = recovery
+        self.verify_quote = verify_quote
         self.remote = None
         self.node_json = None
-        self.stopped = True
+        self.network_state = NodeNetworkState.stopped
 
         hosts, *port = host.split(":")
         self.host, *self.pubhost = hosts.split(",")
@@ -370,6 +460,12 @@ class Node:
 
         self.pubhost = self.pubhost[0] if self.pubhost else self.host
 
+    def __hash__(self):
+        return self.node_id
+
+    def __eq__(self, other):
+        return self.node_id == other.node_id
+
     def _set_ports(self, probably_free_function):
         if self.tls_port is None:
             self.raft_port, self.tls_port = infra.net.two_different(
@@ -378,7 +474,16 @@ class Node:
         else:
             self.raft_port = probably_free_function(self.host)
 
-    def start(self, lib_name, enclave_type="debug", **kwargs):
+    def start(
+        self,
+        lib_name,
+        enclave_type,
+        workspace,
+        label,
+        other_quote=None,
+        other_quoted_data=None,
+        **kwargs,
+    ):
         """
         Creates a CCFRemote instance, sets it up (connects, creates the directory and ships over the files), and
         (optionally) starts the node by executing the appropriate command.
@@ -386,54 +491,64 @@ class Node:
         Raises exception if failed to prepare or start the node
         :param lib_name: the enclave package to load
         :param enclave_type: default: debug. Choices: 'simulate', 'debug', 'virtual'
+        :param workspace: directory where node is started
+        :param label: label for this node (to differentiate nodes from different test runs)
+        :param other_quote: when starting a node in verify mode, path to other node's quote
+        :param other_quoted_data: when starting a node in verify node, path to other node's quoted_data
         :return: void
         """
-        try:
-            lib_path = infra.path.build_lib_path(lib_name, enclave_type)
-            self.remote = infra.remote.CCFRemote(
-                lib_path,
-                str(self.node_id),
-                self.host,
-                self.pubhost,
-                self.raft_port,
-                self.tls_port,
-                self.remote_impl,
-                enclave_type,
-                **kwargs,
+        lib_path = infra.path.build_lib_path(lib_name, enclave_type)
+        self.remote = infra.remote.CCFRemote(
+            lib_path,
+            str(self.node_id),
+            self.host,
+            self.pubhost,
+            self.raft_port,
+            self.tls_port,
+            self.remote_impl,
+            enclave_type,
+            self.verify_quote,
+            workspace,
+            label,
+            other_quote,
+            other_quoted_data,
+            **kwargs,
+        )
+        self.remote.setup()
+        LOG.info("Remote {} started".format(self.node_id))
+        self.network_state = NodeNetworkState.started
+        if self.recovery:
+            self.remote.set_recovery()
+        if self.debug:
+            print("")
+            phost = "localhost" if self.host.startswith("127.") else self.host
+            print(
+                "================= Please run the below command on "
+                + phost
+                + " and press enter to continue ================="
             )
-            self.remote.setup()
-            LOG.info("Remote {} started".format(self.node_id))
-            self.stopped = False
-            if self.recovery:
-                self.remote.set_recovery()
-            if self.debug:
-                print("")
-                phost = "localhost" if self.host.startswith("127.") else self.host
-                print(
-                    "================= Please run the below command on "
-                    + phost
-                    + " and press enter to continue ================="
-                )
-                print("")
-                print(self.remote.debug_node_cmd())
-                print("")
-                input("Press Enter to continue...")
+            print("")
+            print(self.remote.debug_node_cmd())
+            print("")
+            input("Press Enter to continue...")
+            self.node_json = self.remote.info()
+        else:
+            if self.perf:
+                self.remote.set_perf()
+            self.remote.start()
+            if not self.verify_quote:
                 self.node_json = self.remote.info()
-            else:
-                if self.perf:
-                    self.remote.set_perf()
-                self.node_json = self.remote.start()
-        except Exception:
-            LOG.exception("Failed to start node {}".format(self.host))
-            raise
 
     def stop(self):
         if self.remote:
             self.remote.stop()
-            self.stopped = True
+            self.network_state = NodeNetworkState.stopped
 
     def is_stopped(self):
-        return self.stopped
+        return self.network_state == NodeNetworkState.stopped
+
+    def is_joined(self):
+        return self.network_state == NodeNetworkState.joined
 
     def start_network(self):
         infra.proc.ccall(
@@ -445,6 +560,19 @@ class Node:
         ).check_returncode()
         LOG.info("Started Network")
 
+    def complete_join_network(self):
+        LOG.info("Joining Network")
+        self.network_state = NodeNetworkState.joined
+
+    def join_network_custom(self, host, tls_port, net_cert):
+        with self.management_client(format="json") as c:
+            res = c.rpc(
+                "joinNetwork",
+                {"hostname": host, "service": str(tls_port), "network_cert": net_cert},
+            )
+            assert res.error is None
+        self.complete_join_network()
+
     def join_network(self):
         infra.proc.ccall(
             "./client",
@@ -454,7 +582,7 @@ class Node:
             "joinnetwork",
             "--req=joinNetwork.json",
         ).check_returncode()
-        LOG.info("Joining Network")
+        self.complete_join_network()
 
     def set_recovery(self):
         self.remote.set_recovery()
@@ -464,27 +592,6 @@ class Node:
 
     def get_sealed_secrets(self):
         return self.remote.get_sealed_secrets()
-
-    def wait_until_ready(self, timeout=5):
-        with open("getCommit.json", "w") as gcf:
-            gcf.write('{"id":1,"jsonrpc":"2.0","method":"getCommit","params":{}}\n')
-        for _ in range(timeout):
-            time.sleep(1)
-            rv = infra.proc.ccall(
-                "./client",
-                "--host={}".format(self.host),
-                "--port={}".format(self.tls_port),
-                "--ca=networkcert.pem",
-                "userrpc",
-                "--cert=user1_cert.pem",
-                "--pk=user1_privk.pem",
-                "--req=getCommit.json",
-                log_output=False,
-            )
-            # Make sure that the commit is greater than 2
-            if re.search(r'"commit":([2-9]|\d{2,})', rv.stdout.decode()):
-                return
-        raise ValueError("Timed out waiting for node {}".format(self.node_id))
 
     def user_client(self, format="msgpack", user_id=1, **kwargs):
         return infra.jsonrpc.client(
@@ -505,6 +612,7 @@ class Node:
             "management",
             cert=None,
             key=None,
+            cafile="{}.pem".format(self.node_id),
             description="node {} (mgmt)".format(self.node_id),
             **kwargs,
         )

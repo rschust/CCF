@@ -11,6 +11,9 @@ import logging
 import time
 import os
 from enum import IntEnum
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import asymmetric
 
 from loguru import logger as LOG
 
@@ -26,8 +29,7 @@ class ErrorCode(IntEnum):
     INVALID_CALLER_ID = -32606
     CODE_ID_NOT_FOUND = -32607
     CODE_ID_RETIRED = -32608
-    RPC_FORWARDED = -32609
-    RPC_NOT_FORWARDED = -32610
+    RPC_NOT_FORWARDED = -32609
     SERVER_ERROR_START = -32000
     TX_NOT_LEADER = -32001
     TX_REPLICATED = -32002
@@ -38,6 +40,7 @@ class ErrorCode(IntEnum):
     INSUFFICIENT_RIGHTS = -32007
     DENIED = -32008
     TX_LEADER_UNKNOWN = -32009
+    RPC_NOT_SIGNED = -32010
     SERVER_ERROR_END = -32099
 
 
@@ -99,17 +102,19 @@ class Response:
         return d
 
     def _from_parsed(self, parsed):
-        def decode(sl):
-            if hasattr(sl, "decode"):
+        def decode(sl, is_key=False):
+            if is_key and hasattr(sl, "decode"):
                 return sl.decode()
-            elif hasattr(sl, "items"):
-                return {decode(k): decode(v) for k, v in sl.items()}
+            if hasattr(sl, "items"):
+                return {decode(k, is_key=True): decode(v) for k, v in sl.items()}
             elif isinstance(sl, list):
                 return [decode(e) for e in sl]
             else:
                 return sl
 
-        parsed_s = {decode(attr): decode(value) for attr, value in parsed.items()}
+        parsed_s = {
+            decode(attr, is_key=True): decode(value) for attr, value in parsed.items()
+        }
         unexpected = parsed_s.keys() - self._attrs
         if unexpected:
             raise ValueError("Unexpected keys in response: {}".format(unexpected))
@@ -140,6 +145,16 @@ class FramedTLSClient:
     def connect(self):
         if self.cafile:
             self.context = ssl.create_default_context(cafile=self.cafile)
+
+            # Auto detect EC curve to use based on server CA
+            ca_bytes = open(self.cafile, "rb").read()
+            ca_curve = (
+                x509.load_pem_x509_certificate(ca_bytes, default_backend())
+                .public_key()
+                .curve
+            )
+            if isinstance(ca_curve, asymmetric.ec.SECP256K1):
+                self.context.set_ecdh_curve("secp256k1")
         else:
             self.context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         if self.cert and self.key:
@@ -155,11 +170,14 @@ class FramedTLSClient:
         self.conn.sendall(frame)
 
     def _read(self):
-        size, = struct.unpack("<I", self.conn.read(4))
-        return self.conn.read(size)
+        size, = struct.unpack("<I", self.conn.recv(4))
+        data = self.conn.recv(size)
+        while len(data) < size:
+            data += self.conn.recv(size - len(data))
+        return data
 
     def read(self):
-        for _ in range(1000):
+        for _ in range(5000):
             r, _, _ = select.select([self.conn], [], [], 0)
             if r:
                 return self._read()
@@ -203,13 +221,15 @@ class RPCLogger:
 
     def log_response(self, response):
         LOG.debug(
-            "#{} {}".format(
-                response.id,
-                {
-                    k: v
-                    for k, v in (response.__dict__ or {}).items()
-                    if not k.startswith("_")
-                },
+            truncate(
+                "#{} {}".format(
+                    response.id,
+                    {
+                        k: v
+                        for k, v in (response.__dict__ or {}).items()
+                        if not k.startswith("_")
+                    },
+                )
             )
         )
 

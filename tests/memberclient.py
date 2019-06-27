@@ -84,6 +84,7 @@ def run(args):
             "--port={}".format(primary.tls_port),
             "--id=0",
             "--ca=networkcert.pem",
+            "--sign",
         )
         j_result = json.loads(result.stdout)
         assert not j_result["result"]
@@ -98,6 +99,7 @@ def run(args):
             "--port={}".format(primary.tls_port),
             "--id=0",
             "--ca=networkcert.pem",
+            "--sign",
         )
         j_result = json.loads(result.stdout)
         assert j_result["result"]
@@ -159,6 +161,7 @@ def run(args):
             "--port={}".format(primary.tls_port),
             "--id=1",
             "--ca=networkcert.pem",
+            "--sign",
         )
         j_result = json.loads(result.stdout)
         assert not j_result["result"]
@@ -174,6 +177,7 @@ def run(args):
             "--port={}".format(primary.tls_port),
             "--id=1",
             "--ca=networkcert.pem",
+            "--sign",
         )
         j_result = json.loads(result.stdout)
         assert j_result["result"]
@@ -234,6 +238,7 @@ def run(args):
             "--port={}".format(primary.tls_port),
             "--id=3",
             "--ca=networkcert.pem",
+            "--sign",
         )
         j_result = json.loads(result.stdout)
         assert not j_result["result"]
@@ -248,6 +253,7 @@ def run(args):
             "--port={}".format(primary.tls_port),
             "--id=3",
             "--ca=networkcert.pem",
+            "--sign",
         )
         j_result = json.loads(result.stdout)
         assert j_result["result"]
@@ -291,8 +297,8 @@ if __name__ == "__main__":
         parser.add_argument(
             "-p",
             "--package",
-            help="The enclave package to load (e.g., libsimplebank)",
-            required=True,
+            help="The enclave package to load (e.g., libloggingenc)",
+            default="libloggingenc",
         )
 
     args = e2e_args.cli_args(add)

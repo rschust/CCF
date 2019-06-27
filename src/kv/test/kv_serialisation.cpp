@@ -3,8 +3,8 @@
 #include "../../ds/logger.h"
 #include "../../enclave/appinterface.h"
 #include "../../node/encryptor.h"
-#include "../kvserialiser.h"
 #include "../kv.h"
+#include "../kvserialiser.h"
 #include "../replicator.h"
 
 #include <doctest/doctest.h>
@@ -247,7 +247,7 @@ bool corrupt_serialised_tx(
       if (match_buffer.size() == value_to_corrupt.size())
       {
         i = 'X';
-        LOG_DEBUG << "Corrupting serialised public data" << std::endl;
+        LOG_DEBUG_FMT("Corrupting serialised public data");
         return true;
       }
     }

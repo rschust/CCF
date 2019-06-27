@@ -22,7 +22,6 @@ namespace jsonrpc
   static constexpr auto CODE = "code";
   static constexpr auto MESSAGE = "message";
   static constexpr auto DATA = "data";
-  static constexpr auto OK = "OK";
   static constexpr auto SIG = "sig";
   static constexpr auto REQ = "req";
 
@@ -37,8 +36,7 @@ namespace jsonrpc
   XX(INVALID_CALLER_ID, -32606) \
   XX(CODE_ID_NOT_FOUND, -32607) \
   XX(CODE_ID_RETIRED, -32608) \
-  XX(RPC_FORWARDED, -32609) \
-  XX(RPC_NOT_FORWARDED, -32610) \
+  XX(RPC_NOT_FORWARDED, -3269) \
   XX(SERVER_ERROR_START, -32000) \
   XX(TX_NOT_LEADER, -32001) \
   XX(TX_REPLICATED, -32002) \
@@ -49,6 +47,7 @@ namespace jsonrpc
   XX(INSUFFICIENT_RIGHTS, -32007) \
   XX(DENIED, -32008) \
   XX(TX_LEADER_UNKNOWN, -32009) \
+  XX(RPC_NOT_SIGNED, -32010) \
   XX(SERVER_ERROR_END, -32099)
 
   enum ErrorCodes : int16_t
@@ -179,6 +178,11 @@ namespace jsonrpc
   {
     T result;
     SeqNo id;
+
+    T* operator->()
+    {
+      return &result;
+    }
   };
 
   template <typename T>
@@ -215,21 +219,7 @@ namespace jsonrpc
       message(std::string(get_error_prefix(error_code)) + msg)
     {}
   };
-  ADD_JSON_TRANSLATORS(Error, code, message)
-
-  template <typename T>
-  void to_json(nlohmann::json& j, const Error& e)
-  {
-    j[CODE] = e.code;
-    j[MESSAGE] = e.message;
-  }
-
-  template <typename T>
-  void from_json(const nlohmann::json& j, Error& e)
-  {
-    e.code = j[CODE];
-    e.message = j[MESSAGE];
-  }
+  ADD_JSON_TRANSLATORS(Error, code, message);
 
   template <typename T>
   struct ErrorEx : public Error
@@ -264,11 +254,6 @@ namespace jsonrpc
   {
     nlohmann::json j(result);
     return std::make_pair(true, j);
-  }
-
-  inline std::pair<bool, nlohmann::json> success()
-  {
-    return success(OK);
   }
 
   inline nlohmann::json result_response(SeqNo id, const nlohmann::json& result)

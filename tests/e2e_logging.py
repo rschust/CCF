@@ -17,23 +17,6 @@ import e2e_args
 from loguru import logger as LOG
 
 
-def wait_for_node_commit_sync(nodes):
-    """
-    Wait for commit level to get in sync on all nodes. This is expected to
-    happen once CFTR has been established, in the absence of new transactions.
-    """
-    for _ in range(3):
-        commits = []
-        for node in nodes:
-            with node.management_client() as c:
-                id = c.request("getCommit", {})
-                commits.append(c.response(id).commit)
-        if [commits[0]] * len(commits) == commits:
-            break
-        time.sleep(1)
-    assert [commits[0]] * len(commits) == commits, "All nodes at the same commit"
-
-
 def run(args):
     hosts = ["localhost", "localhost"]
 
@@ -56,42 +39,40 @@ def run(args):
                 LOG.debug("Write/Read on leader")
                 with primary.user_client(format="json") as c:
                     check_commit(
-                        c.rpc("LOG_record", {"id": 42, "msg": msg}), result="OK"
+                        c.rpc("LOG_record", {"id": 42, "msg": msg}), result=True
                     )
                     check_notification(
-                        c.rpc("LOG_record", {"id": 43, "msg": msg2}), result="OK"
+                        c.rpc("LOG_record", {"id": 43, "msg": msg2}), result=True
                     )
-                    check(c.rpc("LOG_get", {"id": 42}), result=msg)
-                    check(c.rpc("LOG_get", {"id": 43}), result=msg2)
+                    check(c.rpc("LOG_get", {"id": 42}), result={"msg": msg})
+                    check(c.rpc("LOG_get", {"id": 43}), result={"msg": msg2})
+
+                LOG.debug("Write on all follower frontends")
+                with follower.management_client(format="json") as c:
+                    check_commit(c.do("mkSign", params={}), result=True)
+                with follower.member_client(format="json") as c:
+                    check_commit(c.do("mkSign", params={}), result=True)
 
                 LOG.debug("Write/Read on follower")
                 with follower.user_client(format="json") as c:
-                    # In the case of leader forwarding, record the follower's current commit index
-                    if args.leader_forwarding:
-                        id = c.request("getCommit", {})
-                        commit_before = c.response(id).commit
-
-                    check(
-                        c.rpc("LOG_record", {"id": 0, "msg": follower_msg}),
-                        error=lambda e: e["code"]
-                        == (
-                            infra.jsonrpc.ErrorCode.RPC_FORWARDED
-                            if args.leader_forwarding
-                            else infra.jsonrpc.ErrorCode.TX_NOT_LEADER
-                        ),
+                    check_commit(
+                        c.rpc("LOG_record", {"id": 100, "msg": follower_msg}),
+                        result=True,
                     )
-                    check(c.rpc("LOG_get", {"id": 42}), result=msg)
+                    check(c.rpc("LOG_get", {"id": 100}), result={"msg": follower_msg})
+                    check(c.rpc("LOG_get", {"id": 42}), result={"msg": msg})
 
-                    if args.leader_forwarding:
-                        # In the case of leader forwarding, wait until the forwarded transaction
-                        # has been replicated before reading record
-                        for _ in range(network.replication_delay):
-                            id = c.request("getCommit", {})
-                            if c.response(id).commit >= commit_before + 2:
-                                break
-                            time.sleep(1)
-
-                        check(c.rpc("LOG_get", {"id": 0}), result=follower_msg)
+                LOG.debug("Write/Read large messages on leader")
+                with primary.user_client(format="json") as c:
+                    id = 44
+                    for p in range(14, 20):
+                        long_msg = "X" * (2 ** p)
+                        check_commit(
+                            c.rpc("LOG_record", {"id": id, "msg": long_msg}),
+                            result=True,
+                        )
+                        check(c.rpc("LOG_get", {"id": id}), result={"msg": long_msg})
+                    id += 1
 
 
 if __name__ == "__main__":

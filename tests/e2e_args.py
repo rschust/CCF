@@ -2,6 +2,7 @@
 # Licensed under the Apache 2.0 License.
 import argparse
 import os
+import infra.path
 
 
 def cli_args(add=lambda x: None, parser=None, accept_unknown=False):
@@ -36,16 +37,12 @@ def cli_args(add=lambda x: None, parser=None, accept_unknown=False):
         choices=("trace", "debug", "info", "fail", "fatal"),
     )
     parser.add_argument(
-        "-a",
-        "--remote-attestation-ca",
-        help="Remote attestation CA. If empty, no nodes can be added on ACC.",
+        "-g", "--gov-script", help="Path to governance script", required=True
     )
-    parser.add_argument("-g", "--gov-script", help="Path to governance script")
     parser.add_argument("-s", "--app-script", help="Path to app script")
     parser.add_argument(
-        "-q",
-        "--expect-quote",
-        help="Expect a quote when starting node.",
+        "--ignore-quote",
+        help="Ignore node quote (e.g. virtual enclave)",
         action="store_true",
     )
     parser.add_argument(
@@ -83,13 +80,14 @@ def cli_args(add=lambda x: None, parser=None, accept_unknown=False):
         "--pdb", help="Break to debugger on exception", action="store_true"
     )
     parser.add_argument(
-        "--leader-forwarding",
-        help="Expect followers to forward write RPC to leader",
-        action="store_true",
-    )
-    parser.add_argument(
         "--notify-server", help="Server host to notify progress to (host:port)"
     )
+    parser.add_argument(
+        "--workspace",
+        help="Temporary directory where nodes store their logs, ledgers, quotes, etc.",
+        default=infra.path.default_workspace(),
+    )
+    parser.add_argument("--label", help="Unique identifier for the test", required=True)
     add(parser)
 
     if accept_unknown:

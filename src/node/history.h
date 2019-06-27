@@ -15,18 +15,21 @@
 #include <deque>
 #include <string.h>
 
+extern "C"
+{
 #if defined(INSIDE_ENCLAVE) && !defined(__linux__)
 // Tricks Kremlin into including the right endian.h for the enclave.
 // MUSL doesn't provide any macros that it could be identified by,
 // so we use our own. This avoids macro redefinition warnings.
 #  define __linux__
-#  include <merkle_tree/MerkleTree.h>
+#  include <evercrypt/MerkleTree.h>
 
 #  undef __linux__
 #else
-#  include <merkle_tree/MerkleTree.h>
+#  include <evercrypt/MerkleTree.h>
 
 #endif
+}
 
 namespace ccf
 {
@@ -66,7 +69,7 @@ namespace ccf
 
   static void log_hash(const crypto::Sha256Hash& h, HashOp flag)
   {
-    LOG_DEBUG << "History [" << flag << "] " << h << std::endl;
+    LOG_DEBUG_FMT("History [{}] {}", flag, h);
   }
 
   class NullTxHistory : public kv::TxHistory
@@ -101,7 +104,7 @@ namespace ccf
     void emit_signature() override
     {
       auto version = store.next_version();
-      LOG_INFO << "Issuing signature at " << version << std::endl;
+      LOG_INFO_FMT("Issuing signature at {}", version);
       store.commit(
         version,
         [version, this]() {
@@ -224,7 +227,7 @@ namespace ccf
       auto sig = sig_tv->get(0);
       if (!sig.has_value())
       {
-        LOG_FAIL << "No signature found in signatures map" << std::endl;
+        LOG_FAIL_FMT("No signature found in signatures map");
         return false;
       }
       auto sig_value = sig.value();
@@ -234,8 +237,8 @@ namespace ccf
       auto ni = ni_tv->get(sig_value.node);
       if (!ni.has_value())
       {
-        LOG_FAIL << "No node info, and therefore no cert for node "
-                 << sig_value.node << std::endl;
+        LOG_FAIL_FMT(
+          "No node info, and therefore no cert for node {}", sig_value.node);
         return false;
       }
       tls::Verifier from_cert(ni.value().cert);
@@ -266,9 +269,8 @@ namespace ccf
       auto version = store.next_version();
       auto term = replicator->get_term();
       auto commit = replicator->get_commit_idx();
-      LOG_INFO << "Issuing signature at " << version << std::endl;
-      LOG_DEBUG << "Signed at " << version << " term: " << term
-                << " commit: " << commit << std::endl;
+      LOG_INFO_FMT("Issuing signature at {}", version);
+      LOG_DEBUG_FMT("Signed at {} term: {} commit: {}", version, term, commit);
       store.commit(
         version,
         [version, term, commit, this]() {

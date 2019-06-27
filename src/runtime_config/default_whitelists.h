@@ -18,7 +18,6 @@ namespace ccf
       Tables::NODE_CERTS,
       Tables::VALUES,
       Tables::SIGNATURES,
-      Tables::ATTESTATION_CAS,
       Tables::USER_CLIENT_SIGNATURES,
       Tables::MEMBER_CLIENT_SIGNATURES,
       Tables::WHITELISTS,
@@ -34,7 +33,6 @@ namespace ccf
       Tables::NODES,
       Tables::NODE_CERTS,
       Tables::VALUES,
-      Tables::ATTESTATION_CAS,
       Tables::WHITELISTS,
       Tables::GOV_SCRIPTS,
       Tables::APP_SCRIPTS}},
@@ -43,10 +41,10 @@ namespace ccf
      {Tables::MEMBERS,
       Tables::MEMBER_CERTS,
       Tables::MEMBER_ACKS,
-      Tables::ATTESTATION_CAS,
       Tables::WHITELISTS,
       Tables::GOV_SCRIPTS,
-      Tables::APP_SCRIPTS}},
+      Tables::APP_SCRIPTS,
+      Tables::VOTING_HISTORY}},
 
     {USER_APP_CAN_WRITE, {Tables::APP_PUBLIC, Tables::APP}}};
 }

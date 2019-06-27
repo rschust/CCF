@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the Apache 2.0 License.
 #pragma once
-#include "attestationca.h"
 #include "certs.h"
 #include "clientsignatures.h"
 #include "codeid.h"
@@ -13,6 +12,7 @@
 #include "secrets.h"
 #include "signatures.h"
 #include "values.h"
+#include "votinghistory.h"
 #include "whitelists.h"
 
 #include <memory>
@@ -31,7 +31,6 @@ namespace ccf
     Values& values;
     Nodes& nodes;
     Signatures& signatures;
-    AttestationCAs& attestation_cas;
     ClientSignatures& user_client_signatures;
     ClientSignatures& member_client_signatures;
     Whitelists& whitelists;
@@ -40,6 +39,7 @@ namespace ccf
     Scripts& app_scripts;
     Secrets& secrets_table;
     CodeIDs& code_id;
+    VotingHistoryTable& voting_history;
 
     // TODO(#important,#TR): SERVICE table should be added to record the initial
     // state of the service and its successive recoveries (sections IV-B, IV-G).
@@ -59,7 +59,6 @@ namespace ccf
       nodes(tables->create<Nodes>(Tables::NODES, kv::SecurityDomain::PUBLIC)),
       signatures(tables->create<Signatures>(
         Tables::SIGNATURES, kv::SecurityDomain::PUBLIC)),
-      attestation_cas(tables->create<AttestationCAs>(Tables::ATTESTATION_CAS)),
       user_client_signatures(
         tables->create<ClientSignatures>(Tables::USER_CLIENT_SIGNATURES)),
       member_client_signatures(
@@ -75,7 +74,9 @@ namespace ccf
       secrets_table(
         tables->create<Secrets>(Tables::SECRETS, kv::SecurityDomain::PUBLIC)),
       code_id(
-        tables->create<CodeIDs>(Tables::CODEID, kv::SecurityDomain::PUBLIC))
+        tables->create<CodeIDs>(Tables::CODEID, kv::SecurityDomain::PUBLIC)),
+      voting_history(tables->create<VotingHistoryTable>(
+        Tables::VOTING_HISTORY, kv::SecurityDomain::PUBLIC))
     {}
 
     /** Returns a tuple of all tables that are possibly accessible from scripts
@@ -93,14 +94,14 @@ namespace ccf
         std::ref(values),
         std::ref(nodes),
         std::ref(signatures),
-        std::ref(attestation_cas),
         std::ref(user_client_signatures),
         std::ref(member_client_signatures),
         std::ref(whitelists),
         std::ref(proposals),
         std::ref(gov_scripts),
         std::ref(app_scripts),
-        std::ref(code_id));
+        std::ref(code_id),
+        std::ref(voting_history));
     }
   };
 }

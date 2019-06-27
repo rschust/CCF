@@ -1,6 +1,5 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the Apache 2.0 License.
-cmake_minimum_required(VERSION 3.11)
 
 set(MSGPACK_INCLUDE_DIR ${CCF_DIR}/3rdparty/msgpack-c)
 set(SNMALLOC_INSTALL_DIR /opt/snmalloc)
@@ -18,19 +17,33 @@ set(Boost_ADDITIONAL_VERSIONS "1.67" "1.67.0")
 find_package(Boost 1.60.0 REQUIRED)
 find_package(Threads REQUIRED)
 
+# Azure Pipelines does not support color codes
+if (DEFINED ENV{BUILD_BUILDNUMBER})
+  set(PYTHON python3)
+else()
+  set(PYTHON unbuffer python3)
+endif()
+
 if(MSVC)
   add_compile_options(/W3 /std:c++latest)
 else()
-  #add_compile_options(-mcx16 -march=native -Wall -Werror -g -gsplit-dwarf)
-
   # GCC requires libatomic as well as libpthread.
   if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
     set(${CMAKE_THREAD_LIBS_INIT} "$CMAKE_THREAD_LIBS_INIT} atomic")
     separate_arguments(COVERAGE_FLAGS UNIX_COMMAND "--coverage -fprofile-arcs -ftest-coverage")
+    separate_arguments(COVERAGE_LINK UNIX_COMMAND "gcov")
   else()
     separate_arguments(COVERAGE_FLAGS UNIX_COMMAND "-fprofile-instr-generate -fcoverage-mapping")
+    separate_arguments(COVERAGE_LINK UNIX_COMMAND "-fprofile-instr-generate -fcoverage-mapping")
   endif()
 endif()
+
+function(enable_coverage name)
+  if (COVERAGE)
+    target_compile_options(${name} PRIVATE ${COVERAGE_FLAGS})
+    target_link_libraries(${name} PRIVATE ${COVERAGE_LINK})
+  endif()
+endfunction()
 
 set(CURVE_CHOICE "secp384r1" CACHE STRING "One of secp384r1, curve25519, secp256k1_mbedtls, secp256k1_bitcoin")
 if (${CURVE_CHOICE} STREQUAL "secp384r1")
@@ -74,6 +87,8 @@ endif()
 
 option(SAN "Enable Address and Undefined Behavior Sanitizers" OFF)
 option(DISABLE_QUOTE_VERIFICATION "Disable quote verification" OFF)
+option(BUILD_END_TO_END_TESTS "Build end to end tests" ON)
+option(COVERAGE "Enable coverage mapping" OFF)
 
 option(PBFT "Enable PBFT" OFF)
 if (PBFT)
@@ -87,7 +102,6 @@ option(DEBUG_CONFIG "Enable non-production options options to aid debugging" OFF
 if(DEBUG_CONFIG)
   add_definitions(-DDEBUG_CONFIG)
 endif()
-
 
 option(USE_NLJSON_KV_SERIALISER "Use nlohmann JSON as the KV serialiser" OFF)
 if (USE_NLJSON_KV_SERIALISER)
@@ -119,6 +133,7 @@ include_directories(
   ${SNMALLOC_INSTALL_DIR}/include
 )
 
+set(TARGET "all" CACHE STRING "One of sgx, virtual, all")
 
 set(OE_PREFIX "/opt/openenclave" CACHE PATH "Path to Open Enclave install")
 message(STATUS "Open Enclave prefix set to ${OE_PREFIX}")
@@ -140,12 +155,16 @@ set(OE_LIBCXX_INCLUDE_DIR "${OE_INCLUDE_DIR}/openenclave/3rdparty/libcxx")
 set(OESIGN "${OE_BIN_DIR}/oesign")
 set(OEGEN "${OE_BIN_DIR}/oeedger8r")
 
-execute_process(
+
+add_custom_command(
     COMMAND ${OEGEN} ${CCF_DIR}/src/edl/ccf.edl --trusted --trusted-dir ${CMAKE_CURRENT_BINARY_DIR} --untrusted --untrusted-dir ${CMAKE_CURRENT_BINARY_DIR}
     COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/ccf_t.c ${CMAKE_CURRENT_BINARY_DIR}/ccf_t.cpp
     COMMAND mv ${CMAKE_CURRENT_BINARY_DIR}/ccf_u.c ${CMAKE_CURRENT_BINARY_DIR}/ccf_u.cpp
 )
 
+configure_file(${CCF_DIR}/tests/tests.sh ${CMAKE_CURRENT_BINARY_DIR}/tests.sh COPYONLY)
+
+if(NOT ${TARGET} STREQUAL "virtual")
 # If OE was built with LINK_SGX=1, then we also need to link SGX
 execute_process(COMMAND "ldd" ${OESIGN}
                 COMMAND "grep" "-c" "sgx"
@@ -162,8 +181,15 @@ if(NOT OE_NO_SGX)
 
   if (NOT DISABLE_QUOTE_VERIFICATION)
     set(QUOTES_ENABLED ON)
-    set(TEST_EXPECT_QUOTE "-q")
+    else()
+      set(TEST_IGNORE_QUOTE "--ignore-quote")
   endif()
+  else()
+    set(TEST_IGNORE_QUOTE "--ignore-quote")
+endif()
+else()
+  set(TEST_ENCLAVE_TYPE
+    -e virtual)
 endif()
 
 # Test-only option to enable extensive tests
@@ -246,7 +272,7 @@ set(ENCLAVE_FILES
 )
 
 function(enable_quote_code name)
-  if (NOT OE_NO_SGX AND NOT DISABLE_QUOTE_VERIFICATION)
+  if (QUOTES_ENABLED)
     target_compile_definitions(${name} PRIVATE -DGET_QUOTE)
   endif()
 endfunction()
@@ -310,7 +336,7 @@ include(${CCF_DIR}/cmake/secp256k1.cmake)
 ## Build PBFT if used as consensus
 if (PBFT)
   message(STATUS "Using PBFT as consensus")
-  include(${CCF_DIR}/pbft/cmake/pbft.cmake)
+  include(${CCF_DIR}/ePBFT/cmake/pbft.cmake)
 
   target_include_directories(libbyz.host PRIVATE
     ${CCF_DIR}/src/ds
@@ -328,6 +354,17 @@ if (PBFT)
   )
 endif()
 
+function(create_patched_enclave_lib name app_oe_conf_path enclave_sign_key_path)
+  set(patched_name ${name}.patched)
+  add_custom_target(${patched_name}
+      COMMAND cp ${CMAKE_CURRENT_BINARY_DIR}/lib${name}.so ${CMAKE_CURRENT_BINARY_DIR}/lib${patched_name}.so
+      COMMAND PYTHONPATH=${CCF_DIR}/tests:$ENV{PYTHONPATH} python3 patch_binary.py -p ${CMAKE_CURRENT_BINARY_DIR}/lib${patched_name}.so
+      WORKING_DIRECTORY ${CCF_DIR}/tests
+      DEPENDS ${name}
+  )
+  sign_app_library(${patched_name} ${app_oe_conf_path} ${enclave_sign_key_path})
+endfunction()
+
 ## Enclave library wrapper
 function(add_enclave_lib name app_oe_conf_path enclave_sign_key_path)
 
@@ -337,6 +374,7 @@ function(add_enclave_lib name app_oe_conf_path enclave_sign_key_path)
     "SRCS;INCLUDE_DIRS;LINK_LIBS"
   )
 
+  if(NOT ${TARGET} STREQUAL "virtual")
   add_library(${name} SHARED
     ${ENCLAVE_FILES}
     ${PARSED_ARGS_SRCS}
@@ -359,35 +397,40 @@ function(add_enclave_lib name app_oe_conf_path enclave_sign_key_path)
     ${OE_LIBC_INCLUDE_DIR}
     ${OE_TP_INCLUDE_DIR}
     ${PARSED_ARGS_INCLUDE_DIRS}
-    ${MERKLE_TREE_INC}
+      ${EVERCRYPT_INC}
     ${CMAKE_CURRENT_BINARY_DIR}
   )
   if (PBFT)
     target_include_directories(${name} SYSTEM PRIVATE
-      ${CCF_DIR}/pbft/src/pbft/
+        ${CCF_DIR}/ePBFT/src/pbft/
     )
   endif()
+    if (PBFT)
   target_link_libraries(${name} PRIVATE
+        -Wl,--allow-multiple-definition #TODO(#important): This is unfortunate
+        libbyz.enclave
+      )
+    endif()
+    target_link_libraries(${name} PRIVATE
     -nostdlib -nodefaultlibs -nostartfiles
     -Wl,--no-undefined
     -Wl,-Bstatic,-Bsymbolic,--export-dynamic,-pie
-    ${ENCLAVE_LIBS}
     -lgcc
     ${PARSED_ARGS_LINK_LIBS}
     ccfcrypto.enclave
-    merkle_tree.enclave
+      evercrypt.enclave
+      ${ENCLAVE_LIBS}
     secp256k1.enclave
   )
-  if (PBFT)
-    target_link_libraries(${name} PRIVATE
-      -Wl,--allow-multiple-definition #TODO(#important): This is unfortunate
-      libbyz.enclave
-    )
-  endif()
   set_property(TARGET ${name} PROPERTY POSITION_INDEPENDENT_CODE ON)
   sign_app_library(${name} ${app_oe_conf_path} ${enclave_sign_key_path})
   enable_quote_code(${name})
+    if (${name} STREQUAL "loggingenc")
+        create_patched_enclave_lib(${name} ${app_oe_conf_path} ${enclave_sign_key_path})
+    endif()
+  endif()
 
+  if(${TARGET} STREQUAL "virtual" OR ${TARGET} STREQUAL "all")
   ## Build a virtual enclave, loaded as a shared library without OE
   set(virt_name ${name}.virtual)
   add_library(${virt_name} SHARED
@@ -401,38 +444,41 @@ function(add_enclave_lib name app_oe_conf_path enclave_sign_key_path)
     VIRTUAL_ENCLAVE
     -DIS_ADDRESS_SPACE_CONSTRAINED
   )
-  target_compile_options(${virt_name} PRIVATE -stdlib=libc++ -mcx16)
+    target_compile_options(${virt_name} PRIVATE
+      -stdlib=libc++)
   target_include_directories(${virt_name} SYSTEM PRIVATE
     ${PARSED_ARGS_INCLUDE_DIRS}
     ${CCFCRYPTO_INC}
-    ${MERKLE_TREE_INC}
+      ${EVERCRYPT_INC}
     ${OE_INCLUDE_DIR}
     ${CMAKE_CURRENT_BINARY_DIR}
   )
   if (PBFT)
     target_include_directories(${virt_name} SYSTEM PRIVATE
-      ${CCF_DIR}/pbft/src/pbft/
+        ${CCF_DIR}/ePBFT/src/pbft/
     )
   endif()
+    if (PBFT)
   target_link_libraries(${virt_name} PRIVATE
+        -Wl,--allow-multiple-definition #TODO(#important): This is unfortunate
+        libbyz.host
+      )
+    endif()
+    target_link_libraries(${virt_name} PRIVATE
     ${PARSED_ARGS_LINK_LIBS}
     -stdlib=libc++
     -lc++
     -lc++abi
     ccfcrypto.host
-    merkle_tree.host
+      evercrypt.host
     lua.host
     ${CMAKE_THREAD_LIBS_INIT}
     secp256k1.host
   )
-  if (PBFT)
-    target_link_libraries(${virt_name} PRIVATE
-      -Wl,--allow-multiple-definition #TODO(#important): This is unfortunate
-      libbyz.host
-    )
-  endif()
+    enable_coverage(${virt_name})
   use_client_mbedtls(${virt_name})
   set_property(TARGET ${virt_name} PROPERTY POSITION_INDEPENDENT_CODE ON)
+  endif()
 endfunction()
 
 ## Unit test wrapper
@@ -442,15 +488,8 @@ function(add_unit_test name)
   target_include_directories(${name} PRIVATE
     src
     ${CCFCRYPTO_INC})
-  target_compile_options(${name} PRIVATE
-    -fdiagnostics-color=always
-    -mcx16
-    ${COVERAGE_FLAGS})
-    if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "GNU")
-      target_link_libraries(${name} PRIVATE gcov)
-    else()
-      target_link_libraries(${name} PRIVATE -fprofile-instr-generate -fcoverage-mapping)
-    endif()
+  target_compile_options(${name} PRIVATE -fdiagnostics-color=always -mcx16)
+  enable_coverage(${name})
   target_link_libraries(${name} PRIVATE ${CMAKE_THREAD_LIBS_INIT} ccfcrypto.host)
 
   use_client_mbedtls(${name})
@@ -458,9 +497,15 @@ function(add_unit_test name)
 
   add_test(
     NAME ${name}
-    COMMAND ${CCF_DIR}/tests/unit_test_wrapper.sh ${name})
+    COMMAND ${CCF_DIR}/tests/unit_test_wrapper.sh ${name}
+  )
+  set_property(
+    TEST ${name}
+    APPEND
+    PROPERTY
+      LABELS unit_test
+  )
 endfunction()
-
 
 # GenesisGenerator Executable
 add_executable(genesisgenerator ${CCF_DIR}/src/genesisgen/main.cpp)
@@ -471,6 +516,7 @@ target_link_libraries(genesisgenerator PRIVATE
   secp256k1.host
 )
 
+if(NOT ${TARGET} STREQUAL "virtual")
 # Host Executable
 add_executable(cchost
   ${SNMALLOC_SRC_FILES_HOST}
@@ -498,10 +544,12 @@ target_link_libraries(cchost PRIVATE
   ${CMAKE_DL_LIBS}
   ${CMAKE_THREAD_LIBS_INIT}
   ccfcrypto.host
-  merkle_tree.host
+    evercrypt.host
 )
 enable_quote_code(cchost)
+endif()
 
+if(${TARGET} STREQUAL "virtual" OR ${TARGET} STREQUAL "all")
 # Virtual Host Executable
 add_executable(cchost.virtual
   ${SNMALLOC_SRC_FILES_HOST}
@@ -520,7 +568,7 @@ target_include_directories(cchost.virtual PRIVATE
   ${CMAKE_CURRENT_BINARY_DIR}
 )
 add_san(cchost.virtual)
-
+  enable_coverage(cchost.virtual)
 target_link_libraries(cchost.virtual PRIVATE
   uv
   ${CRYPTO_LIBRARY}
@@ -531,9 +579,9 @@ target_link_libraries(cchost.virtual PRIVATE
   -stdlib=libc++
   -Wl,--export-dynamic
   ccfcrypto.host
-  merkle_tree.host
+    evercrypt.host
 )
-enable_quote_code(cchost.virtual)
+endif()
 
 # Client executable
 add_executable(client ${CCF_DIR}/src/clients/client.cpp)
@@ -551,9 +599,9 @@ set_property(TARGET lua.host PROPERTY POSITION_INDEPENDENT_CODE ON)
 
 # Common test args for Python scripts starting up CCF networks
 set(CCF_NETWORK_TEST_ARGS
-  ${TEST_EXPECT_QUOTE}
+  ${TEST_IGNORE_QUOTE}
+  ${TEST_ENCLAVE_TYPE}
   -l ${TEST_HOST_LOGGING_LEVEL}
-  -a ${CCF_DIR}/tests/ra_ca.pem
   -g ${CCF_DIR}/src/runtime_config/gov.lua
 )
 
@@ -565,7 +613,6 @@ add_enclave_lib(luagenericenc ${CCF_DIR}/src/apps/luageneric/oe_sign.conf ${CCF_
 # Common options
 set(TEST_ITERATIONS 200000)
 
-option(WRITE_TX_TIMES "Write csv files containing time of every sent request and received response" ON)
 ## Helper for building clients inheriting from perf_client
 function(add_client_exe name)
 
@@ -592,6 +639,40 @@ function(add_client_exe name)
 
 endfunction()
 
+## Helper for building end-to-end function tests using the python infrastructure
+function(add_e2e_test)
+  cmake_parse_arguments(PARSE_ARGV 0 PARSED_ARGS
+    ""
+    "NAME;PYTHON_SCRIPT;"
+    "ADDITIONAL_ARGS"
+  )
+
+  if (BUILD_END_TO_END_TESTS)
+    add_test(
+      NAME ${PARSED_ARGS_NAME}
+      COMMAND ${PYTHON} ${PARSED_ARGS_PYTHON_SCRIPT}
+        -b .
+        --label ${PARSED_ARGS_NAME}
+        ${CCF_NETWORK_TEST_ARGS}
+        ${PARSED_ARGS_ADDITIONAL_ARGS}
+    )
+
+    ## Make python test client framework importable
+    set_property(
+      TEST ${PARSED_ARGS_NAME}
+      APPEND
+      PROPERTY
+        ENVIRONMENT "PYTHONPATH=${CCF_DIR}/tests:$ENV{PYTHONPATH}"
+    )
+    set_property(
+      TEST ${PARSED_ARGS_NAME}
+      APPEND
+      PROPERTY
+        LABELS end_to_end
+    )
+  endif()
+endfunction()
+
 ## Helper for building end-to-end perf tests using the python infrastucture
 function(add_perf_test)
 
@@ -612,31 +693,29 @@ function(add_perf_test)
     unset(VERIFICATION_ARG)
   endif()
 
-  if(WRITE_TX_TIMES)
-    set(TX_TIMES_SUFFIX
-      --write-tx-times
-    )
-  else()
-    unset(TX_TIMES_SUFFIX)
-  endif()
-
   add_test(
     NAME ${PARSED_ARGS_NAME}
-    COMMAND python3 ${PARSED_ARGS_PYTHON_SCRIPT}
+    COMMAND ${PYTHON} ${PARSED_ARGS_PYTHON_SCRIPT}
       -b .
       -c ${PARSED_ARGS_CLIENT_BIN}
       -i ${PARSED_ARGS_ITERATIONS}
       ${CCF_NETWORK_TEST_ARGS}
       ${PARSED_ARGS_ADDITIONAL_ARGS}
-      ${TX_TIMES_SUFFIX}
+      --write-tx-times
       ${VERIFICATION_ARG}
   )
 
   ## Make python test client framework importable
   set_property(
     TEST ${PARSED_ARGS_NAME}
+    APPEND
     PROPERTY
       ENVIRONMENT "PYTHONPATH=${CCF_DIR}/tests:$ENV{PYTHONPATH}"
   )
-
+  set_property(
+    TEST ${PARSED_ARGS_NAME}
+    APPEND
+    PROPERTY
+      LABELS perf
+  )
 endfunction()

@@ -3,9 +3,7 @@
 #pragma once
 
 #ifdef PBFT
-#  include "libbyz/libbyz.h"
-#  include "libbyz/receive_message_base.h"
-#  include "pbft/pbft_deps.h"
+#  include "pbft/pbft.h"
 #endif
 
 #include "calltypes.h"
@@ -19,7 +17,6 @@
 #include "kv/replicator.h"
 #include "networkstate.h"
 #include "nodetonode.h"
-#include "notifier.h"
 #include "rpc/consts.h"
 #include "rpc/frontend.h"
 #include "rpc/serialization.h"
@@ -29,6 +26,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <fmt/format_header_only.h>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <unordered_set>
@@ -86,7 +84,7 @@ namespace ccf
     template <typename T>
     static Result<T> Fail(const char* s)
     {
-      LOG_DEBUG << s << std::endl;
+      LOG_DEBUG_FMT(s);
       return {{}, false};
     }
 
@@ -121,12 +119,15 @@ namespace ccf
     raft::Config raft_config;
 
     NetworkState& network;
-    std::shared_ptr<Consensus> raft;
+    std::shared_ptr<ConsensusRaft> raft;
+#ifdef PBFT
+    using ConsensusPbft = pbft::Pbft<NodeToNode>;
+    std::shared_ptr<ConsensusPbft> pbft;
+#endif
     std::shared_ptr<NodeToNode> n2n_channels;
     enclave::RPCSessions& rpcsessions;
     std::shared_ptr<kv::TxHistory> history;
     std::shared_ptr<kv::AbstractTxEncryptor> encryptor;
-    Notifier& notifier;
 
     //
     // join protocol
@@ -147,28 +148,17 @@ namespace ccf
 
     raft::Index ledger_idx = 0;
 
-    //
-    // PBFT
-    //
-#ifdef PBFT
-    IMessageReceiveBase* message_receiver_base = nullptr;
-    char* mem;
-    std::unique_ptr<INetwork> pbft_network;
-#endif
-
   public:
     NodeState(
       ringbuffer::AbstractWriterFactory& writer_factory,
       NetworkState& network,
-      enclave::RPCSessions& rpcsessions,
-      Notifier& notifier) :
+      enclave::RPCSessions& rpcsessions) :
       sm(State::uninitialized),
       self(INVALID_ID),
       writer_factory(writer_factory),
       to_host(writer_factory.create_writer_to_outside()),
       network(network),
-      rpcsessions(rpcsessions),
-      notifier(notifier)
+      rpcsessions(rpcsessions)
     {
       ::EverCrypt_AutoConfig2_init();
     }
@@ -224,7 +214,7 @@ namespace ccf
 
       if (res != OE_OK)
       {
-        LOG_FAIL << "Failed to get quote: " << oe_result_str(res) << std::endl;
+        LOG_FAIL_FMT("Failed to get quote: {}", oe_result_str(res));
         return Fail<CreateNew::Out>("oe_get_report failed");
       }
       quote.resize(quote_len);
@@ -234,8 +224,7 @@ namespace ccf
       res = oe_parse_report(quote.data(), quote.size(), &parsed_quote);
       if (res != OE_OK)
       {
-        LOG_FAIL << "Failed to parse quote: " << oe_result_str(res)
-                 << std::endl;
+        LOG_FAIL_FMT("Failed to parse quote: {}", oe_result_str(res));
         return Fail<CreateNew::Out>("oe_parse_report failed");
       }
 
@@ -319,7 +308,7 @@ namespace ccf
          tx0Sig});
     }
 
-    void join_network(const JoinNetwork::In& args)
+    void join_network(enclave::RPCContext& rpc_ctx, const JoinNetwork::In& args)
     {
       std::lock_guard<SpinLock> guard(lock);
 
@@ -328,13 +317,20 @@ namespace ccf
 
       // Peer certificate needs to be signed by network certificate
       auto tls_ca = std::make_shared<tls::CA>(args.network_cert);
-      auto join_client_cert = std::make_shared<tls::Cert>(
+      auto join_client_cert = std::make_unique<tls::Cert>(
         Actors::NODES, tls_ca, node_cert, node_kp.private_key(), nullb);
 
       // Create and connect to endpoint
-      auto join_client = rpcsessions.create_client(join_client_cert);
+      auto join_client =
+        rpcsessions.create_client(rpc_ctx, std::move(join_client_cert));
+
+      // Only reply to the client when the leader has responded
+      rpc_ctx.is_pending = true;
+
       join_client->connect(
-        args.hostname, args.service, [this](const std::vector<uint8_t>& data) {
+        args.hostname,
+        args.service,
+        [this, rpc_ctx](const std::vector<uint8_t>& data) {
           auto j = jsonrpc::unpack(data, jsonrpc::Pack::MsgPack);
 
           // Check that the response is valid.
@@ -344,9 +340,14 @@ namespace ccf
           }
           catch (const std::exception& e)
           {
-            LOG_FAIL << "An error occurred while joining the network: "
-                     << j.dump() << std::endl;
-            return false;
+            return std::make_pair(
+              rpc_ctx.is_pending,
+              jsonrpc::pack(
+                jsonrpc::error_response(
+                  rpc_ctx.req.seq_no,
+                  jsonrpc::ErrorCodes::INTERNAL_ERROR,
+                  "An error occured while joining the network"),
+                rpc_ctx.pack.value()));
           }
 
           // Set network secrets, node id and become part of network.
@@ -370,7 +371,7 @@ namespace ccf
             // If the joining node was started in recovery, truncate the ledger
             // and reset the store as we will receive the entirety of the ledger
             // from the leader
-            LOG_INFO << "Truncating entire ledger" << std::endl;
+            LOG_INFO_FMT("Truncating entire ledger");
             log_truncate(0);
             network.tables->clear();
           }
@@ -387,10 +388,18 @@ namespace ccf
           else
             sm.advance(State::partOfNetwork);
 
-          LOG_INFO << "Node has now joined the network as node " << self << ": "
-                   << (public_only ? "public only" : "all domains")
-                   << std::endl;
-          return true;
+          LOG_INFO_FMT(
+            "Node has now joined the network as node {}: {}",
+            self,
+            (public_only ? "public only" : "all domains"));
+
+          jsonrpc::Response<JoinNetwork::Out> join_rpc_resp;
+          join_rpc_resp.id = rpc_ctx.req.seq_no;
+          join_rpc_resp.result.id = self;
+
+          return std::make_pair(
+            rpc_ctx.is_pending,
+            jsonrpc::pack(join_rpc_resp, rpc_ctx.pack.value()));
         });
 
       // Generate fresh key to encrypt/decrypt historical network secrets sent
@@ -398,7 +407,7 @@ namespace ccf
       raw_fresh_key = tls::Entropy().random(crypto::GCM_SIZE_KEY);
 
       // Send RPC request to remote node to join the network.
-      jsonrpc::ProcedureCall<ccf::JoinNetworkNodeToNode::In> join_rpc;
+      jsonrpc::ProcedureCall<JoinNetworkNodeToNode::In> join_rpc;
       join_rpc.id = 1;
       join_rpc.method = ccf::NodeProcs::JOIN;
       join_rpc.params.raw_fresh_key = raw_fresh_key;
@@ -418,8 +427,6 @@ namespace ccf
       network.secrets = std::make_unique<NetworkSecrets>(
         "CN=The CA", std::make_unique<Seal>(writer_factory), false);
       accept_member_connections();
-      auto r = std::make_shared<kv::NullReplicator>();
-      network.tables->set_replicator(r);
       setup_store();
     }
 
@@ -430,7 +437,7 @@ namespace ccf
     {
       std::lock_guard<SpinLock> guard(lock);
       sm.expect(State::readingPublicLedger);
-      LOG_INFO << "Start public recovery" << std::endl;
+      LOG_INFO_FMT("Start public recovery");
       read_ledger_idx(++ledger_idx);
     }
 
@@ -439,14 +446,14 @@ namespace ccf
       std::lock_guard<SpinLock> guard(lock);
       sm.expect(State::readingPublicLedger);
 
-      LOG_INFO << "Deserialising public ledger entry (" << ledger_entry.size()
-               << ")" << std::endl;
+      LOG_INFO_FMT(
+        "Deserialising public ledger entry ({})", ledger_entry.size());
 
       // When reading the public ledger, deserialise in the real store
       auto result = network.tables->deserialise(ledger_entry, true);
       if (result == kv::DeserialiseSuccess::FAILED)
       {
-        LOG_FAIL << "Failed to deserialise entry in public ledger" << std::endl;
+        LOG_FAIL_FMT("Failed to deserialise entry in public ledger");
         network.tables->rollback(ledger_idx - 1);
         recover_public_ledger_end_unsafe();
         return;
@@ -462,8 +469,8 @@ namespace ccf
         if (sig.has_value())
         {
           auto sig_value = sig.value();
-          LOG_DEBUG << "Read signature at " << ledger_idx << " for term "
-                    << sig_value.term << std::endl;
+          LOG_DEBUG_FMT(
+            "Read signature at {} for term {}", ledger_idx, sig_value.term);
           for (auto i = term_history.size(); i <= sig_value.term; ++i)
           {
             term_history.push_back(last_recovered_commit_idx + 1);
@@ -489,8 +496,7 @@ namespace ccf
       auto ls_idx = last_signed_index(tx);
       network.tables->rollback(ls_idx);
       log_truncate(ls_idx);
-      LOG_INFO << "Truncating ledger to last signed index: " << ls_idx
-               << std::endl;
+      LOG_INFO_FMT("Truncating ledger to last signed index: {}", ls_idx);
 
       network.secrets->promote_secrets(0, ls_idx + 1);
       sm.advance(State::awaitingRecoveryTx);
@@ -516,15 +522,14 @@ namespace ccf
       std::lock_guard<SpinLock> guard(lock);
       sm.expect(State::readingPrivateLedger);
 
-      LOG_INFO << "Deserialising private ledger entry (" << ledger_entry.size()
-               << ")" << std::endl;
+      LOG_INFO_FMT(
+        "Deserialising private ledger entry ({})", ledger_entry.size());
 
       // When reading the private ledger, deserialise in the recovery store
       auto result = recovery_store->deserialise(ledger_entry);
       if (result == kv::DeserialiseSuccess::FAILED)
       {
-        LOG_FAIL << "Failed to deserialise entry in private ledger"
-                 << std::endl;
+        LOG_FAIL_FMT("Failed to deserialise entry in private ledger");
         recovery_store->rollback(ledger_idx - 1);
         recover_private_ledger_end_unsafe();
         return;
@@ -536,8 +541,7 @@ namespace ccf
 
       if (recovery_store->current_version() == recovery_v)
       {
-        LOG_INFO << "Reached recovery final version at " << recovery_v
-                 << std::endl;
+        LOG_INFO_FMT("Reached recovery final version at {}", recovery_v);
         recover_private_ledger_end_unsafe();
       }
       else
@@ -555,8 +559,8 @@ namespace ccf
       auto h = dynamic_cast<MerkleTxHistory*>(recovery_history.get());
       if (h->get_root() != recovery_root)
       {
-        LOG_FATAL << "Root of public store does not match root of private store"
-                  << std::endl;
+        LOG_FATAL_FMT(
+          "Root of public store does not match root of private store");
       }
 
       network.tables->swap_private_maps(*recovery_store.get());
@@ -576,7 +580,7 @@ namespace ccf
       if (raft->is_follower())
         accept_node_connections();
 
-      LOG_INFO << "Now part of network" << std::endl;
+      LOG_INFO_FMT("Now part of network");
       sm.advance(State::partOfNetwork);
     }
 
@@ -603,11 +607,42 @@ namespace ccf
       }
     }
 
+    void node_quotes(Store::Tx& tx, GetQuotes::Out& result)
+    {
+      auto nodes_view = tx.get_view(network.nodes);
+
+      nodes_view->foreach([&result](const NodeId& nid, const NodeInfo& ni) {
+        if (ni.status == ccf::NodeStatus::TRUSTED)
+        {
+          GetQuotes::Quote quote;
+          quote.node_id = nid;
+          quote.raw = std::string(ni.quote.begin(), ni.quote.end());
+
+#ifdef GET_QUOTE
+          oe_report_t parsed_quote = {0};
+          auto res =
+            oe_parse_report(ni.quote.data(), ni.quote.size(), &parsed_quote);
+          if (res != OE_OK)
+          {
+            quote.error =
+              fmt::format("Failed to parse quote: {}", oe_result_str(res));
+          }
+          else
+          {
+            quote.mrenclave = fmt::format(
+              "{:02x}", fmt::join(parsed_quote.identity.unique_id, ""));
+          }
+#endif
+          result.quotes.push_back(quote);
+        }
+      });
+    };
+
     //
     // funcs in state "awaitingRecoveryTx"
     //
     std::string replace_nodes(
-      Store::Tx& tx, const std::vector<ccf::NodeInfo> new_nodes)
+      Store::Tx& tx, const std::vector<ccf::NodeInfo>& new_nodes)
     {
       std::lock_guard<SpinLock> guard(lock);
       sm.expect(State::awaitingRecoveryTx);
@@ -640,12 +675,12 @@ namespace ccf
       for (const auto& ni : new_nodes)
       {
         auto nid = get_next_id(values_view, ccf::ValueIds::NEXT_NODE_ID);
-        LOG_INFO << "Adding node " << nid << std::endl;
+        LOG_INFO_FMT("Adding node {}", nid);
         nodes_view->put(nid, ni);
         if (node_cert == ni.cert)
         {
           self = nid;
-          LOG_INFO << "Setting self to " << self << std::endl;
+          LOG_INFO_FMT("Setting self to {}", self);
         }
         tls::Verifier verifier(ni.cert);
         certs_view->put(
@@ -654,7 +689,7 @@ namespace ccf
           nid);
       }
 
-      LOG_INFO << "Replaced nodes" << std::endl;
+      LOG_INFO_FMT("Replaced nodes");
 
       kv::Version index = 0;
       kv::Term term = 0;
@@ -672,8 +707,11 @@ namespace ccf
       if (h)
         h->set_node_id(self);
       setup_raft(true);
-      LOG_DEBUG << "Restarting Raft at index: " << index << " term: " << term
-                << " commit_idx: " << global_commit << std::endl;
+      LOG_DEBUG_FMT(
+        "Restarting Raft at index: {} term: {} commit_idx {}",
+        index,
+        term,
+        global_commit);
       raft->force_become_leader(index, term, term_history, index);
 
       // Sets itself as trusted
@@ -688,7 +726,7 @@ namespace ccf
 
       accept_node_connections();
 
-      LOG_INFO << "Restarted network" << std::endl;
+      LOG_INFO_FMT("Restarted network");
 
       sm.advance(State::partOfPublicNetwork);
 
@@ -732,8 +770,7 @@ namespace ccf
       auto h = dynamic_cast<MerkleTxHistory*>(history.get());
       recovery_root = h->get_root();
 
-      LOG_DEBUG << "Recovery store successfully setup: " << recovery_v
-                << std::endl;
+      LOG_DEBUG_FMT("Recovery store successfully setup: {}", recovery_v);
     }
 
     bool finish_recovery(
@@ -742,7 +779,7 @@ namespace ccf
       std::lock_guard<SpinLock> guard(lock);
       sm.expect(State::partOfPublicNetwork);
 
-      LOG_INFO << "Initiating end of recovery (leader)" << std::endl;
+      LOG_INFO_FMT("Initiating end of recovery (leader)");
 
       // Unseal past network secrets
       auto past_secrets_idx = network.secrets->restore(sealed_secrets);
@@ -774,16 +811,18 @@ namespace ccf
           auto serial = network.secrets->get_serialised_secret(ns_idx);
           if (serial.has_value())
           {
-            LOG_DEBUG << "Writing network secret " << ns_idx << " of size "
-                      << serial.value().size() << " to follower " << nid
-                      << " in secrets table." << std::endl;
+            LOG_DEBUG_FMT(
+              "Writing network secret {} of size {} to follower {} in secrets "
+              "table",
+              ns_idx,
+              serial.value().size(),
+              nid);
 
             // Encrypt network secrets with joiner's fresh key
             auto search = joiners_fresh_keys.find(nid);
             if (search == joiners_fresh_keys.end())
             {
-              LOG_FAIL << "No fresh key for joiner " + std::to_string(nid)
-                       << std::endl;
+              LOG_FAIL_FMT("No fresh key for joiner {}", nid);
               continue;
             }
 
@@ -807,8 +846,7 @@ namespace ccf
           }
           else
           {
-            LOG_FAIL << "Network secrets have not been restored: " << ns_idx
-                     << std::endl;
+            LOG_FAIL_FMT("Network secrets have not been restored: {}", ns_idx);
             return false;
           }
         }
@@ -843,14 +881,14 @@ namespace ccf
 #endif
     }
 
-    bool node_msg(const std::vector<uint8_t>& data)
+    void node_msg(const std::vector<uint8_t>& data)
     {
       // Only process messages once part of network
       if (
         !sm.check(State::partOfNetwork) &&
         !sm.check(State::partOfPublicNetwork))
       {
-        return false;
+        return;
       }
 
       auto p = data.data();
@@ -864,42 +902,18 @@ namespace ccf
           n2n_channels->recv_message(p, psize);
           break;
 
-        case consensus_msg:
-          header = serialized::peek<Header>(p, psize);
-          if (header.msg == raft::RaftMsgType::pbft_message)
-            pbft_msg(p, psize);
-          else
-            raft->recv_message(p, psize);
+        case consensus_msg_pbft:
+#ifdef PBFT
+          pbft->recv_message(p, psize);
+#endif
+          break;
+        case consensus_msg_raft:
+          raft->recv_message(p, psize);
           break;
 
         default:
         {}
       }
-      return true;
-    }
-
-    bool pbft_msg(const uint8_t* data, size_t size)
-    {
-#ifdef PBFT
-      if (
-        (!sm.check(State::partOfNetwork) &&
-         !sm.check(State::partOfPublicNetwork)) ||
-        message_receiver_base == nullptr)
-      {
-        LOG_INFO
-          << "Currently not part of the network, dropping message to PBFT"
-          << std::endl;
-        return false;
-      }
-
-      // TODO(#PBFT): Check integrity of message before passing it on to pbft
-      serialized::skip(data, size, sizeof(raft::RaftHeader));
-
-      message_receiver_base->receive_message((char*)((uint64_t)data), size);
-      return true;
-#else
-      throw std::logic_error("PBFT messages are not implemented");
-#endif
     }
 
     //
@@ -943,7 +957,7 @@ namespace ccf
     void set_joiner_key(
       NodeId joiner_id, const std::vector<uint8_t>& raw_key) override
     {
-      LOG_DEBUG << "Setting fresh key for joiner " << joiner_id << std::endl;
+      LOG_DEBUG_FMT("Setting fresh key for joiner {}", joiner_id);
       joiners_fresh_keys.emplace(joiner_id, raw_key);
     }
 
@@ -1002,9 +1016,7 @@ namespace ccf
 #ifdef GET_QUOTE
       // Setting own code version as trusted
       auto codeid_view = tx.get_view(network.code_id);
-      auto code_id =
-        get_next_id(tx.get_view(network.values), ValueIds::NEXT_CODE_ID);
-      codeid_view->put(code_id, {CodeStatus::ACCEPTED, node_code_id});
+      codeid_view->put(node_code_id, CodeStatus::ACCEPTED);
 #else
       throw std::logic_error("Code version check is not implemented");
 #endif
@@ -1018,7 +1030,7 @@ namespace ccf
 
       sm.expect(State::partOfPublicNetwork);
 
-      LOG_INFO << "Initiating end of recovery (follower)" << std::endl;
+      LOG_INFO_FMT("Initiating end of recovery (follower)");
 
       // Setup new temporary store and record current version/root
       setup_private_recovery_store();
@@ -1039,7 +1051,7 @@ namespace ccf
       // setup node-to-node channels, raft, pbft and store hooks
       n2n_channels->initialize(self, network.secrets->get_current().priv_key);
 
-      raft = std::make_shared<Consensus>(
+      raft = std::make_shared<ConsensusRaft>(
         std::make_unique<raft::Adaptor<Store, kv::DeserialiseSuccess>>(
           network.tables),
         std::make_unique<raft::LedgerEnclave>(writer_factory),
@@ -1065,30 +1077,18 @@ namespace ccf
         auto configure = false;
         std::unordered_set<NodeId> configuration;
 
-#ifdef PBFT
-        std::vector<std::tuple<NodeId, const std::string&, const std::string&>>
-          active_nodes;
-#endif
-
         // TODO(#important,#TR): Only TRUSTED nodes should be sent append
         // entries, counted in election votes and allowed to establish
         // node-to-node channels (section III-F).
         for (auto& [node_id, ni] : w)
         {
+#ifdef PBFT
+          pbft->add_configuration({node_id, ni.value.host, ni.value.raftport});
+#endif
           switch (ni.value.status)
           {
-#ifdef PBFT
-            case NodeStatus::TRUSTED:
-              active_nodes.push_back(
-                {node_id, ni.value.host, ni.value.raftport});
-              break;
-#endif
             case NodeStatus::PENDING:
             {
-#ifdef PBFT
-              active_nodes.push_back(
-                {node_id, ni.value.host, ni.value.raftport});
-#endif
               add_node(node_id, ni.value.host, ni.value.raftport);
               configure = true;
               break;
@@ -1099,18 +1099,9 @@ namespace ccf
               break;
             }
             default:
-            {
-#ifdef PBFT
-              active_nodes.push_back(
-                {node_id, ni.value.host, ni.value.raftport});
-#endif
-            }
+            {}
           }
         }
-
-#ifdef PBFT
-        add_pbft_nodes(active_nodes);
-#endif
 
         if (configure)
         {
@@ -1189,22 +1180,12 @@ namespace ccf
 
     void setup_store()
     {
-      history =
-#ifndef DISABLE_PRIMARY_SIGNATURES
-        std::make_shared<MerkleTxHistory>(
-          *network.tables.get(),
-          self,
-          node_kp,
-          network.signatures,
-          network.nodes);
-#else
-        std::make_shared<NullTxHistory>(
-          *network.tables.get(),
-          self,
-          node_kp,
-          network.signatures,
-          network.nodes);
-#endif
+      history = std::make_shared<MerkleTxHistory>(
+        *network.tables.get(),
+        self,
+        node_kp,
+        network.signatures,
+        network.nodes);
 
       encryptor =
 #ifdef USE_NULL_ENCRYPTOR
@@ -1248,93 +1229,7 @@ namespace ccf
 #ifdef PBFT
     void setup_pbft()
     {
-      LOG_INFO << "Setting up pbft replica for node with id: " << self
-               << std::endl;
-      // configure replica
-      GeneralInfo general_info;
-      general_info.num_replicas = 2;
-      general_info.num_clients = 0;
-      general_info.max_faulty = 0;
-      general_info.service_name = "generic";
-      general_info.auth_timeout = 1800000;
-      general_info.view_timeout = 5000;
-      general_info.status_timeout = 100;
-      general_info.recovery_timeout = 9999250000;
-
-      // TODO(#pbft): We do not need this in the long run
-      std::string privk =
-        "0045c65ec31179652c57ae97f50de77e177a939dce74e39d7db51740663afb69";
-      std::string pubk_sig =
-        "aad14ecb5d7ca8caf5ee68d2762721a3d4fdb09b1ae4a699daf74985193b7d42";
-      std::string pubk_enc =
-        "893d4101c5b225c2bdc8633bb322c0ef9861e0c899014536e11196808ffc0d17";
-
-      // Adding myself
-      PrincipalInfo my_info;
-      my_info.id = self;
-      my_info.port = 0;
-      my_info.ip = "256.256.256.256"; // Invalid
-      my_info.pubk_sig = pubk_sig;
-      my_info.pubk_enc = pubk_enc;
-      my_info.host_name = "machineB";
-      LOG_INFO << "PBFT Setup for self with id:" << self << std::endl;
-
-      ::NodeInfo node_info = {my_info, privk, general_info};
-
-      int mem_size = 40 * 8192;
-      mem = (char*)malloc(mem_size);
-      bzero(mem, mem_size);
-
-      auto exec_command = ([](
-                             Byz_req* inb,
-                             Byz_rep* outb,
-                             _Byz_buffer* non_det,
-                             int client,
-                             bool ro,
-                             Seqno n) { return 0; });
-
-      pbft_network = std::make_unique<PbftEnclaveNetwork>(self, n2n_channels);
-
-      Byz_init_replica(
-        node_info,
-        mem,
-        mem_size,
-        exec_command,
-        0,
-        0,
-        pbft_network.get(),
-        &message_receiver_base);
-    }
-
-    void add_pbft_nodes(
-      const std::vector<
-        std::tuple<NodeId, const std::string&, const std::string&>>&
-        active_nodes)
-    {
-      // TODO(#pbft): We do not need this in the long run
-      std::string privk =
-        "0045c65ec31179652c57ae97f50de77e177a939dce74e39d7db51740663afb69";
-      std::string pubk_sig =
-        "aad14ecb5d7ca8caf5ee68d2762721a3d4fdb09b1ae4a699daf74985193b7d42";
-      std::string pubk_enc =
-        "893d4101c5b225c2bdc8633bb322c0ef9861e0c899014536e11196808ffc0d17";
-
-      for (auto [node, host_name, port] : active_nodes)
-      {
-        if (node == self)
-        {
-          continue;
-        }
-        PrincipalInfo info;
-        info.id = node;
-        info.port = short(atoi(port.c_str()));
-        info.ip = "256.256.256.256"; // Invalid
-        info.pubk_sig = pubk_sig;
-        info.pubk_enc = pubk_enc;
-        info.host_name = host_name;
-        LOG_INFO << "PBFT - adding node, id:" << info.id << std::endl;
-        Byz_add_principal(info);
-      }
+      pbft = std::make_shared<ConsensusPbft>(n2n_channels, self);
     }
 #endif
   };

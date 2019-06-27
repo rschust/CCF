@@ -2,12 +2,12 @@
 // Licensed under the Apache 2.0 License.
 #pragma once
 
-#include "../ds/logger.h"
-#include "../ds/messaging.h"
-#include "../ds/ringbuffer.h"
-#include "../tls/context.h"
-#include "../tls/msg_types.h"
+#include "ds/logger.h"
+#include "ds/messaging.h"
+#include "ds/ringbuffer.h"
 #include "endpoint.h"
+#include "tls/context.h"
+#include "tls/msg_types.h"
 
 extern "C" void enclave_shared_free(void*);
 
@@ -170,12 +170,15 @@ namespace enclave
 
     std::vector<uint8_t> read(size_t up_to, bool exact = false)
     {
+      LOG_TRACE_FMT("Requesting {} bytes", up_to);
       // This will return en empty vector if the connection isn't
       // ready, but it will not block on the handshake.
       do_handshake();
 
       if (status != ready)
+      {
         return {};
+      }
 
       // Send pending writes.
       flush();
@@ -185,6 +188,7 @@ namespace enclave
 
       if (read_buffer.size() > 0)
       {
+        LOG_TRACE_FMT("read_buffer is of size: {}", read_buffer.size());
         offset = std::min(up_to, read_buffer.size());
         ::memcpy(data.data(), read_buffer.data(), offset);
 
@@ -198,6 +202,7 @@ namespace enclave
       }
 
       auto r = ctx->read(data.data() + offset, up_to - offset);
+      LOG_TRACE_FMT("ctx->read returned: {}", r);
 
       switch (r)
       {
@@ -205,8 +210,8 @@ namespace enclave
         case MBEDTLS_ERR_NET_CONN_RESET:
         case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
         {
-          LOG_DEBUG << "TLS " << session_id << " on read: " << strerror(r)
-                    << std::endl;
+          LOG_TRACE_FMT("TLS {} on read: {}", session_id, strerror(r));
+
           stop(closed);
 
           if (!exact)
@@ -236,8 +241,7 @@ namespace enclave
 
       if (r < 0)
       {
-        LOG_DEBUG << "TLS " << session_id << " on read: " << strerror(r)
-                  << std::endl;
+        LOG_TRACE_FMT("TLS {} on read: {}", session_id, strerror(r));
         stop(error);
         return {};
       }
@@ -245,10 +249,14 @@ namespace enclave
       auto total = r + offset;
       data.resize(total);
 
+      // We read _some_ data but not enough, and didn't get
+      // MBEDTLS_ERR_SSL_WANT_READ. Probably hit a size limit - try again
       if (exact && (total < up_to))
       {
+        LOG_TRACE_FMT(
+          "Asked for exactly {}, received {}, retrying", up_to, total);
         read_buffer = move(data);
-        return {};
+        return read(up_to, exact);
       }
 
       return data;
@@ -286,48 +294,9 @@ namespace enclave
       if (status != ready)
         return;
 
-      if (pending_write.size() > 0)
-      {
-        auto r = write_some(pending_write);
+      pending_write.insert(pending_write.end(), data.begin(), data.end());
 
-        if (r > 0)
-        {
-          pending_write.erase(pending_write.begin(), pending_write.begin() + r);
-        }
-        else if (r < 0)
-        {
-          LOG_DEBUG << "TLS " << session_id << " on send: " << strerror(r)
-                    << std::endl;
-          stop(error);
-          return;
-        }
-
-        if (pending_write.size() > 0)
-        {
-          pending_write.insert(pending_write.end(), data.begin(), data.end());
-          return;
-        }
-      }
-
-      if (data.size() == 0)
-        return;
-
-      auto r = write_some(data);
-
-      if (r == (int)data.size())
-      {
-        // No need to store any pending write.
-      }
-      else if (r >= 0)
-      {
-        pending_write.insert(pending_write.end(), data.begin() + r, data.end());
-      }
-      else
-      {
-        LOG_DEBUG << "TLS " << session_id << " on send: " << strerror(r)
-                  << std::endl;
-        stop(error);
-      }
+      flush();
     }
 
     void send_buffered(const std::vector<uint8_t>& data)
@@ -342,7 +311,7 @@ namespace enclave
       if (status != ready)
         return;
 
-      if (pending_write.size() > 0)
+      while (pending_write.size() > 0)
       {
         auto r = write_some(pending_write);
 
@@ -350,10 +319,13 @@ namespace enclave
         {
           pending_write.erase(pending_write.begin(), pending_write.begin() + r);
         }
-        else if (r < 0)
+        else if (r == 0)
         {
-          LOG_DEBUG << "TLS " << session_id << " on flush: " << strerror(r)
-                    << std::endl;
+          break;
+        }
+        else
+        {
+          LOG_TRACE_FMT("TLS {} on flush: {}", session_id, strerror(r));
           stop(error);
         }
       }
@@ -365,8 +337,7 @@ namespace enclave
       {
         case handshake:
         {
-          LOG_DEBUG << "TLS " << session_id << " closed during handshake"
-                    << std::endl;
+          LOG_TRACE_FMT("TLS {} closed during handshake", session_id);
           stop(closed);
           break;
         }
@@ -384,15 +355,14 @@ namespace enclave
               // mbedtls may return 0 when a close notify has not been
               // sent. This can't be disambiguated from a successful
               // close notify, so treat them the same.
-              LOG_DEBUG << "TLS " << session_id << " closed" << std::endl;
+              LOG_TRACE_FMT("TLS {} closed ({})", session_id, r);
               stop(closed);
               break;
             }
 
             default:
             {
-              LOG_DEBUG << "TLS " << session_id << " on close: " << strerror(r)
-                        << std::endl;
+              LOG_TRACE_FMT("TLS {} on_close: {}", session_id, strerror(r));
               stop(error);
               break;
             }
@@ -430,16 +400,14 @@ namespace enclave
         case MBEDTLS_ERR_SSL_NO_CLIENT_CERTIFICATE:
         case MBEDTLS_ERR_SSL_PEER_VERIFY_FAILED:
         {
-          LOG_DEBUG << "TLS " << session_id << " on handshake: " << strerror(rc)
-                    << std::endl;
+          LOG_TRACE_FMT("TLS {} on handshake: {}", session_id, strerror(rc));
           stop(authfail);
           break;
         }
 
         case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
         {
-          LOG_DEBUG << "TLS " << session_id << " on handshake: " << strerror(rc)
-                    << std::endl;
+          LOG_TRACE_FMT("TLS {} on handshake: {}", session_id, strerror(rc));
           stop(closed);
           break;
         }
@@ -456,19 +424,17 @@ namespace enclave
           if (r > 0)
           {
             buf.resize(r);
-            LOG_FAIL << std::string(buf.data(), buf.size()) << std::endl;
+            LOG_TRACE_FMT(std::string(buf.data(), buf.size()));
           }
 
-          LOG_DEBUG << "TLS " << session_id << " on handshake: " << strerror(rc)
-                    << std::endl;
+          LOG_TRACE_FMT("TLS {} on handshake: {}", session_id, strerror(rc));
           stop(authfail);
           return;
         }
 
         default:
         {
-          LOG_DEBUG << "TLS " << session_id << " on handshake: " << strerror(rc)
-                    << std::endl;
+          LOG_TRACE_FMT("TLS {} on handshake: {}", session_id, strerror(rc));
           stop(error);
           break;
         }
@@ -585,7 +551,7 @@ namespace enclave
       void* ctx, int level, const char* file, int line, const char* str)
     {
       (void)level;
-      LOG_DEBUG << file << ":" << line << ": " << str << std::endl;
+      LOG_DEBUG_FMT("{}:{}: {}", file, line, str);
     }
 
     std::string strerror(int err)

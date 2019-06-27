@@ -14,14 +14,14 @@ namespace ccf
   static constexpr auto TABLE = "table";
   static constexpr auto OBJECTS = "objects";
 
-  // available methods
   struct GeneralProcs
   {
-    // allows checking term and commit indices
     static constexpr auto GET_COMMIT = "getCommit";
-    static constexpr auto GET_TX_HIST = "getTxHist";
+    static constexpr auto GET_METRICS = "getMetrics";
     static constexpr auto MK_SIGN = "mkSign";
     static constexpr auto GET_LEADER_INFO = "getLeaderInfo";
+    static constexpr auto LIST_METHODS = "listMethods";
+    static constexpr auto GET_SCHEMA = "getSchema";
   };
 
   struct ManagementProcs
@@ -30,6 +30,7 @@ namespace ccf
     static constexpr auto JOIN_NETWORK = "joinNetwork";
     static constexpr auto GET_SIGNED_INDEX = "getSignedIndex";
     static constexpr auto SET_RECOVERY_NODES = "setRecoveryNodes";
+    static constexpr auto GET_QUOTES = "getQuotes";
   };
 
   struct MemberProcs
@@ -41,6 +42,8 @@ namespace ccf
     static constexpr auto VOTE = "vote";
     static constexpr auto PROPOSE = "propose";
     static constexpr auto REMOVAL = "removal";
+
+    static constexpr auto ADD_NODE = "add_node";
 
     static constexpr auto ACK = "ack";
     static constexpr auto UPDATE_ACK_NONCE = "updateAckNonce";

@@ -1,15 +1,15 @@
 .text
 .global _add1
 _add1:
+  push %rdi
   push %rsi
-  mov %rdx, %rcx
   xor %r8, %r8
   xor %r9, %r9
   xor %r10, %r10
   xor %r11, %r11
   xor %rax, %rax
-  addq 0(%rsi), %rcx
-  movq %rcx, 0(%rdi)
+  addq 0(%rsi), %rdx
+  movq %rdx, 0(%rdi)
   adcxq 8(%rsi), %r8
   movq %r8, 8(%rdi)
   adcxq 16(%rsi), %r9
@@ -18,10 +18,11 @@ _add1:
   movq %r10, 24(%rdi)
   adcx %r11, %rax
   pop %rsi
+  pop %rdi
   ret
 
-.global _fadd
-_fadd:
+.global _fadd_
+_fadd_:
   movq 0(%rdx), %r8
   addq 0(%rsi), %r8
   movq 8(%rdx), %r9
@@ -47,8 +48,8 @@ _fadd:
   movq %r8, 0(%rdi)
   ret
 
-.global _fsub
-_fsub:
+.global _fsub_
+_fsub_:
   movq 0(%rsi), %r8
   subq 0(%rdx), %r8
   movq 8(%rsi), %r9
@@ -75,6 +76,7 @@ _fsub:
 
 .global _fmul1
 _fmul1:
+  push %rdi
   push %r12
   push %r13
   mulxq 0(%rsi), %r8, %rcx
@@ -101,14 +103,16 @@ _fmul1:
   movq %r8, 0(%rdi)
   pop %r13
   pop %r12
+  pop %rdi
   ret
 
-.global _fmul_v
-_fmul_v:
+.global _fmul_
+_fmul_:
   push %r12
   push %r13
   push %r14
-  push %rdx
+  push %r15
+  mov %rdx, %r15
   movq 0(%rsi), %rdx
   mulxq 0(%rcx), %r8, %r9
   xor %r10, %r10
@@ -183,7 +187,7 @@ _fmul_v:
   adcx %r8, %rax
   movq %rax, 56(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %r15, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -211,17 +215,19 @@ _fmul_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 0(%rdi)
+  pop %r15
   pop %r14
   pop %r13
   pop %r12
   ret
 
-.global _fmul2_v
-_fmul2_v:
+.global _fmul2
+_fmul2:
   push %r12
   push %r13
   push %r14
-  push %rdx
+  push %r15
+  mov %rdx, %r15
   movq 0(%rsi), %rdx
   mulxq 0(%rcx), %r8, %r9
   xor %r10, %r10
@@ -369,7 +375,7 @@ _fmul2_v:
   adcx %r8, %rax
   movq %rax, 120(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %r15, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -424,18 +430,20 @@ _fmul2_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 32(%rdi)
+  pop %r15
   pop %r14
   pop %r13
   pop %r12
   ret
 
-.global _fsqr_v
-_fsqr_v:
+.global _fsqr
+_fsqr:
   push %r15
   push %r12
   push %r13
   push %r14
-  push %rdx
+  push %rbx
+  mov %rdx, %rbx
   movq 0(%rsi), %rdx
   mulxq 8(%rsi), %r8, %r14
   xor %r15, %r15
@@ -489,7 +497,7 @@ _fsqr_v:
   adcx %rcx, %r14
   movq %r14, 56(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %rbx, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -517,19 +525,21 @@ _fsqr_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 0(%rdi)
+  pop %rbx
   pop %r14
   pop %r13
   pop %r12
   pop %r15
   ret
 
-.global _fsqr2_v
-_fsqr2_v:
+.global _fsqr2
+_fsqr2:
   push %r15
   push %r12
   push %r13
   push %r14
-  push %rdx
+  push %rbx
+  mov %rdx, %rbx
   movq 0(%rsi), %rdx
   mulxq 8(%rsi), %r8, %r14
   xor %r15, %r15
@@ -635,7 +645,7 @@ _fsqr2_v:
   adcx %rcx, %r14
   movq %r14, 120(%rdi)
   mov %rdi, %rsi
-  pop %rdi
+  mov %rbx, %rdi
   mov $38, %rdx
   mulxq 32(%rsi), %r8, %r13
   xor %rcx, %rcx
@@ -690,6 +700,7 @@ _fsqr2_v:
   cmovc %rdx, %rax
   add %rax, %r8
   movq %r8, 32(%rdi)
+  pop %rbx
   pop %r14
   pop %r13
   pop %r12

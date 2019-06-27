@@ -5,6 +5,7 @@
 #include "kv/kvserialiser.h"
 
 #include <limits>
+#include <map>
 #include <stdint.h>
 #include <vector>
 
@@ -17,7 +18,6 @@ namespace ccf
   using NodeId = ObjectId;
   using UserId = ObjectId;
   using CallerId = ObjectId;
-  using CaId = ObjectId;
   using Cert = std::vector<uint8_t>;
   using CodeVersion = ObjectId;
 
@@ -33,6 +33,16 @@ namespace ccf
     static constexpr auto MANAGEMENT = "management";
   };
 
+  enum ActorsType : uint64_t
+  {
+    members = 0,
+    users,
+    nodes,
+    management,
+    // not to be used
+    unknown
+  };
+
   struct Tables
   {
     static constexpr auto MEMBERS = "members";
@@ -42,7 +52,6 @@ namespace ccf
     static constexpr auto NODE_CERTS = "nodecerts";
     static constexpr auto NODES = "nodes";
     static constexpr auto VALUES = "values";
-    static constexpr auto ATTESTATION_CAS = "attestationcas";
     static constexpr auto SEQ_NOS = "seqnos";
     static constexpr auto APP = "app";
     static constexpr auto APP_AUX = "app_aux";
@@ -56,6 +65,7 @@ namespace ccf
     static constexpr auto APP_SCRIPTS = "appscripts";
     static constexpr auto SECRETS = "secrets";
     static constexpr auto CODEID = "codeid";
+    static constexpr auto VOTING_HISTORY = "votinghistory";
   };
 
   using StoreSerialiser = kv::KvStoreSerialiser;
