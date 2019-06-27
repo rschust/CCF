@@ -22,8 +22,7 @@ namespace
 {
   struct SharedPageMap
   {
-    void set(void* p, uint8_t x, uint8_t big);
-    uint8_t get(void* p);
+    uint8_t get(uintptr_t p);
     void set_slab(snmalloc::Superslab* slab);
     void clear_slab(snmalloc::Superslab* slab);
     void clear_slab(snmalloc::Mediumslab* slab);
@@ -56,7 +55,7 @@ namespace
   /**
    * Get the pagemap entry corresponding to a specific address.
    */
-  uint8_t SharedPageMap::get(void* p)
+  uint8_t SharedPageMap::get(uintptr_t p)
   {
     return _pagemap->get(p);
   }
@@ -104,10 +103,10 @@ namespace
     for (size_t i = 0; i < size_bits - SUPERSLAB_BITS; i++)
     {
       size_t run = 1ULL << i;
-      _pagemap->set_range((void*)ss, (uint8_t)(64 + i + SUPERSLAB_BITS), run);
-      ss = (uintptr_t)ss + SUPERSLAB_SIZE * run;
+      _pagemap->set_range(ss, (uint8_t)(64 + i + SUPERSLAB_BITS), run);
+      ss = ss + SUPERSLAB_SIZE * run;
     }
-    _pagemap->set(p, (uint8_t)size_bits);
+    _pagemap->set(address_cast(p), (uint8_t)size_bits);
   }
   /**
    * Update the pagemap to remove a large allocation, of `size` bytes from
@@ -118,7 +117,7 @@ namespace
     size_t rounded_size = bits::next_pow2(size);
     assert(get(p) == bits::next_pow2_bits(size));
     auto count = rounded_size >> SUPERSLAB_BITS;
-    _pagemap->set_range((void*)p, PMNotOurs, count);
+    _pagemap->set_range(address_cast(p), PMNotOurs, count);
   }
 
   /**
@@ -128,7 +127,7 @@ namespace
    */
   void SharedPageMap::set(void* p, uint8_t x)
   {
-    _pagemap->set(p, x);
+    _pagemap->set(address_cast(p), x);
   }
 }
 

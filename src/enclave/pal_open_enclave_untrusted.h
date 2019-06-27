@@ -5,6 +5,7 @@
 #ifdef OPEN_ENCLAVE
 
 #  include <ccf_t.h>
+#  include <ds/address.h>
 #  include <ds/bits.h>
 #  include <pal/pal_consts.h>
 #  include <stdio.h>
