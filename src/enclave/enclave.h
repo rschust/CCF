@@ -51,6 +51,7 @@ namespace enclave
         std::make_shared<ccf::Forwarder>(rpcsessions, n2n_channels)),
       rpc_map(std::make_shared<RpcMap>())
     {
+      set_ccf_shared_pagemap(config->pagemap);
       REGISTER_FRONTEND(
         rpc_map,
         members,
